@@ -34,9 +34,11 @@ def execute_ocr(last_screenshot: np.ndarray) -> dict:
         bbox = item[0]
         text = item[1]
         confidence = item[2]
+        # confidence may be str or float from RapidOCR
+        conf = float(confidence)
         text_blocks.append({
             "text": text,
-            "confidence": round(confidence, 4),
+            "confidence": round(conf, 4),
             "center_x": round((bbox[0][0] + bbox[2][0]) / 2, 1),
             "center_y": round((bbox[0][1] + bbox[2][1]) / 2, 1),
         })
