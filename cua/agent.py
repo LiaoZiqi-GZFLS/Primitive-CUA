@@ -13,27 +13,31 @@ from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.overlay import draw_cursor
 
 
-SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools.
+SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools. You operate in a tool-calling loop: you see screenshots, call tools to act, receive new screenshots, and continue until the task is done.
 
-You have these tools:
-- **screenshot**: Take a full-screen screenshot. You receive two images: the original and one with a red crosshair + circle marking the virtual mouse position.
-- **set_mouse(x, y)**: Move the virtual mouse to normalized coordinates (0.0-1.0). The overlay updates in the next screenshot.
-- **click(button, type, count, scroll)**: Click at the current mouse position. button: left/right/middle. type: single/double. count: number of clicks. scroll: positive=up, negative=down (only for type=single).
-- **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another (all normalized coordinates).
-- **type_keys(keys)**: Type text (string) or key combo (array like ["ctrl", "c"]). Key names: ctrl, alt, shift, enter, tab, escape, backspace, delete, f1-f12, win, up, down, left, right.
-- **magnifier**: Get a square crop of the screen centered on the virtual mouse. Side length = half the shorter screen edge. The cursor overlay is proportionally scaled.
-- **ocr**: Run OCR on the most recent screenshot. Returns recognized text with bounding boxes.
+## Tools
+
+- **screenshot**: Full-screen capture. Returns original image + annotated version with virtual mouse cursor (red crosshair + circle).
+- **set_mouse(x, y)**: Move virtual mouse to normalized coordinates (0.0-1.0, 4 decimal places).
+- **click(button, type, count, scroll)**: Click at current mouse position. button: left/right/middle. type: single/double. count: number of clicks. scroll: positive=up, negative=down.
+- **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another.
+- **type_keys(keys)**: Type text ("hello world"), press a special key ("enter", "tab", "escape", "backspace", "f5"), or press a combo ("ctrl+c", "alt+tab", "win+r").
+- **magnifier**: Square crop centered on cursor, side = half the shorter screen edge. Use for fine details.
+- **ocr**: Run OCR on the current screenshot. Returns text blocks with positions and confidence.
 - **web_search(query)**: Search the web via Kimi built-in search.
-- **finish(success, summary, steps)**: End the task. Report what happened.
+- **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
-IMPORTANT:
-- The screen has a virtual mouse cursor (red circle + crosshair). The annotated screenshot shows WHERE the cursor currently is.
-- To click something, FIRST call set_mouse() to position the cursor over it, THEN call click().
-- After every action you receive new screenshots — use them to verify the result.
-- Use magnifier to see small UI elements and fine details.
-- Use ocr to read text on the screen.
-- Normalized coordinates: (0,0)=top-left, (1,1)=bottom-right. Use 4 decimal places.
-- After completing a task, call finish() with a report."""
+## Critical Rules
+
+1. **ALWAYS end with finish()**: You are in a tool-calling loop. You CANNOT output text directly as a final response. The ONLY way to communicate your final result to the user is by calling the finish() tool. If the task is done, call finish(). If you're stuck or the task is impossible, call finish(success=false, ...). Never output a text summary without also calling finish().
+
+2. **Act, don't describe**: Don't tell me what you plan to do — just call the tool. Take one action at a time, observe the result, then take the next action.
+
+3. **Verify with screenshots**: After every action you receive new screenshots. Use them to confirm the action had the expected effect. If something went wrong, try an alternative approach.
+
+4. **Coordinates**: (0,0)=top-left, (1,1)=bottom-right. Use exactly 4 decimal places. The annotated screenshot shows WHERE the cursor currently is with a red crosshair. To click something: FIRST set_mouse() to position the cursor, THEN click().
+
+5. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
 
 
 def _build_initial_content(task: str, mouse_pos, screen_w, screen_h, img):
@@ -109,6 +113,17 @@ def run_task(task: str, config: dict | None = None) -> dict:
         ]
 
         for iteration in range(max_iterations):
+            # Near the limit, inject a strong reminder
+            if iteration == max_iterations - 3:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You have only a few iterations remaining. If the task is done "
+                        "or you cannot proceed further, call finish() NOW. "
+                        "You MUST use the finish tool — do not output text."
+                    ),
+                })
+
             try:
                 response = client.chat.completions.create(
                     model=model,
@@ -126,7 +141,20 @@ def run_task(task: str, config: dict | None = None) -> dict:
             msg = choice.message
 
             if msg.content and not msg.tool_calls:
+                # Model output text without calling a tool — likely a summary.
+                # Remind it to use finish() to properly end the task.
+                print(f"  [text response, nudging to call finish]")
                 messages.append({"role": "assistant", "content": msg.content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You output text without calling a tool. Remember: you MUST call "
+                        "the finish() tool to end the task. If the task is complete, call "
+                        "finish(success=true, summary='...', steps=[...]) now. "
+                        "If you cannot complete the task, call finish(success=false, ...). "
+                        "Do not output text — call the finish tool."
+                    ),
+                })
                 continue
 
             if not msg.tool_calls:
