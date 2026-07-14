@@ -1,5 +1,4 @@
 """Agent core loop: drives the Kimi K2.6 tool-calling cycle."""
-import os
 import json
 import time
 from typing import Any
@@ -8,6 +7,7 @@ import mss
 import numpy as np
 from openai import OpenAI
 
+from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.overlay import draw_cursor
@@ -61,19 +61,35 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h, img):
     ]
 
 
-def run_task(task: str) -> dict:
-    """Run a single task. Returns the finish report."""
-    api_key = os.environ.get("MOONSHOT_API_KEY")
-    if not api_key:
-        raise RuntimeError("MOONSHOT_API_KEY environment variable not set")
+def run_task(task: str, config: dict | None = None) -> dict:
+    """Run a single task. Returns the finish report.
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.moonshot.cn/v1",
-    )
+    Args:
+        task: The task description string.
+        config: Optional config dict. If None, loads from config.yaml.
+
+    Returns:
+        Finish report dict with success, summary, steps keys.
+    """
+    if config is None:
+        config = load_config()
+
+    api_key = config.get("moonshot_api_key", "")
+    if not api_key:
+        raise RuntimeError(
+            "API key not set. Either:\n"
+            "  1. Set 'moonshot_api_key' in cua/config.yaml, or\n"
+            "  2. Set the MOONSHOT_API_KEY environment variable"
+        )
+
+    model = config.get("model", "kimi-k2.6")
+    base_url = config.get("base_url", "https://api.moonshot.cn/v1")
+    max_tokens = config.get("max_tokens", 32768)
+    max_iterations = config.get("max_iterations", 50)
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
 
     with mss.mss() as sct:
-        # Get primary monitor dimensions
         monitor = sct.monitors[1]
         screen_w = monitor["width"]
         screen_h = monitor["height"]
@@ -84,7 +100,6 @@ def run_task(task: str) -> dict:
         # Initial screenshot
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
 
-        # Build messages
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -93,14 +108,13 @@ def run_task(task: str) -> dict:
             },
         ]
 
-        max_iterations = 50
         for iteration in range(max_iterations):
             try:
                 response = client.chat.completions.create(
-                    model="kimi-k2.6",
+                    model=model,
                     messages=messages,
                     tools=ALL_TOOLS,
-                    max_tokens=32768,
+                    max_tokens=max_tokens,
                     extra_body={"thinking": {"type": "disabled"}},
                 )
             except Exception as e:
@@ -111,7 +125,6 @@ def run_task(task: str) -> dict:
             choice = response.choices[0]
             msg = choice.message
 
-            # If model responds with text only (thinking/planning without tool calls)
             if msg.content and not msg.tool_calls:
                 messages.append({"role": "assistant", "content": msg.content})
                 continue
@@ -119,7 +132,6 @@ def run_task(task: str) -> dict:
             if not msg.tool_calls:
                 continue
 
-            # Build assistant message with tool_calls for the API
             assistant_msg = {
                 "role": "assistant",
                 "content": msg.content or "",
@@ -137,7 +149,6 @@ def run_task(task: str) -> dict:
             }
             messages.append(assistant_msg)
 
-            # Execute each tool call
             for tc in msg.tool_calls:
                 name = tc.function.name
                 try:
@@ -145,7 +156,6 @@ def run_task(task: str) -> dict:
                 except json.JSONDecodeError:
                     args = {}
 
-                # Truncate for display
                 args_str = json.dumps(args, ensure_ascii=False)
                 if len(args_str) > 120:
                     args_str = args_str[:117] + "..."
@@ -163,17 +173,14 @@ def run_task(task: str) -> dict:
                         "last_screenshot": img,
                     }
 
-                # Update state from tool result
                 if result.get("mouse_pos") is not None:
                     mouse_pos = result["mouse_pos"]
                 if result.get("last_screenshot") is not None:
                     img = result["last_screenshot"]
 
-                # Check for finish sentinel
                 if name == "finish" and "_finish_report" in result:
                     return result["_finish_report"]
 
-                # Separate image blocks from text blocks in tool result
                 content_items = result["content"]
                 text_items = []
                 image_items = []
@@ -183,7 +190,6 @@ def run_task(task: str) -> dict:
                     else:
                         text_items.append(item)
 
-                # Tool message: text only (Kimi API requires string content)
                 tool_text = " ".join(
                     item.get("text", "") for item in text_items
                 )
@@ -193,8 +199,6 @@ def run_task(task: str) -> dict:
                     "content": tool_text,
                 })
 
-                # If tool produced images, append a user message with them
-                # (Kimi API only renders image_url in user messages)
                 if image_items:
                     user_content = image_items + [
                         {"type": "text", "text": f"After {name}: {tool_text}"}
@@ -204,9 +208,8 @@ def run_task(task: str) -> dict:
                         "content": user_content,
                     })
 
-        # Hit max iterations without finish
         return {
             "success": False,
-            "summary": "Reached maximum iterations (50) without calling finish.",
+            "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
             "steps": [],
         }

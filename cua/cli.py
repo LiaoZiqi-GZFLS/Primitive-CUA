@@ -1,14 +1,18 @@
 """CLI entry point for the CUA agent."""
 import sys
 
+from cua.config import load_config
 from cua.agent import run_task
 
 
 def main():
     """Run the CUA agent in an interactive CLI loop."""
+    config = load_config()
+
+    model = config.get("model", "kimi-k2.6")
     print("=" * 60)
     print("CUA - Computer Use Agent")
-    print("  LLM: Kimi K2.6")
+    print(f"  LLM: {model}")
     print("  Type a task to begin, or 'quit' to exit.")
     print("=" * 60)
 
@@ -17,7 +21,7 @@ def main():
     if args:
         task = " ".join(args)
         print(f"\nTask: {task}\n")
-        report = run_task(task)
+        report = run_task(task, config)
         _print_report(report)
         return
 
@@ -36,7 +40,7 @@ def main():
             break
 
         print()
-        report = run_task(task)
+        report = run_task(task, config)
         _print_report(report)
 
 

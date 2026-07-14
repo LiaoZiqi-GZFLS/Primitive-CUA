@@ -1,0 +1,25 @@
+# CUA Configuration
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is gitignored — never commit your API key.
+
+# Kimi API
+moonshot_api_key: ""          # Your Kimi API key (or set MOONSHOT_API_KEY env var)
+model: "kimi-k2.6"            # LLM model (kimi-k2.6, kimi-k2.7-code, etc.)
+base_url: "https://api.moonshot.cn/v1"
+max_tokens: 32768             # Max tokens per API call
+
+# Agent loop
+max_iterations: 50            # Max tool-calling iterations per task
+
+# Screenshot
+jpeg_quality: 85              # JPEG compression quality (1-100)
+
+# Overlay style
+overlay:
+  circle_radius: 15           # Inner red circle radius (px)
+  outer_radius: 18            # White outer ring radius (px)
+  line_width: 2               # Crosshair line width (px)
+  outer_width: 4              # White ring line width (px)
+  inner_width: 3              # Red circle line width (px)
+  color: "#e74c3c"            # Red crosshair/circle color
+  white: "#ffffff"            # White ring color
