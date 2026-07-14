@@ -40,24 +40,28 @@ def draw_cursor(
     outer_width = max(1, int(4 * scale))
     inner_width = max(1, int(3 * scale))
 
-    red = (231, 76, 60, 255)  # #e74c3c
-    white = (255, 255, 255, 255)
+    # Colors with alpha for translucency
+    crosshair_color = (231, 76, 60, 100)   # semi-transparent red for crosshair
+    circle_fill = (231, 76, 60, 50)         # very transparent red fill
+    circle_outline = (231, 76, 60, 200)     # slightly transparent red outline
+    ring_color = (255, 255, 255, 180)       # semi-transparent white outer ring
 
-    # Full-image crosshair
-    draw.line([(0, py), (w, py)], fill=red, width=line_width)
-    draw.line([(px, 0), (px, h)], fill=red, width=line_width)
+    # Full-image crosshair (semi-transparent)
+    draw.line([(0, py), (w, py)], fill=crosshair_color, width=line_width)
+    draw.line([(px, 0), (px, h)], fill=crosshair_color, width=line_width)
 
     # White outer ring
     draw.ellipse(
         [px - outer_radius, py - outer_radius, px + outer_radius, py + outer_radius],
-        outline=white,
+        outline=ring_color,
         width=outer_width,
     )
 
-    # Red inner circle (no fill)
+    # Red inner circle (semi-transparent fill + outline)
     draw.ellipse(
         [px - inner_radius, py - inner_radius, px + inner_radius, py + inner_radius],
-        outline=red,
+        fill=circle_fill,
+        outline=circle_outline,
         width=inner_width,
     )
 
