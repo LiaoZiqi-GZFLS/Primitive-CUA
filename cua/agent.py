@@ -245,8 +245,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 # Verify: after a state-modifying action, ask model to confirm success
                 if name in VERIFY_TOOLS:
-                    print(f"  [verify] checking if {name} succeeded...")
-                    # Build verify message with current screenshot
+                    print(f"  [verify] waiting 0.5s then checking if {name} succeeded...")
+                    time.sleep(0.5)
+                    # Take a fresh screenshot so UI has time to update
+                    img = np.array(sct.grab(monitor))
                     px = round(mouse_pos[0] * screen_w)
                     py = round(mouse_pos[1] * screen_h)
                     annotated = draw_cursor(img, px, py, scale=1.0)
