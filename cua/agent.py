@@ -224,6 +224,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
+                    "name": name,
                     "content": tool_text,
                 })
 
