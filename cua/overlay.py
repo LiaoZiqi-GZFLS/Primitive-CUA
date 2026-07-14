@@ -22,7 +22,11 @@ def draw_cursor(
     Returns:
         RGBA numpy array with overlay drawn
     """
+    scale = max(0.1, scale)
     h, w = image.shape[:2]
+
+    if image.shape[2] != 4:
+        raise ValueError(f"Expected 4-channel BGRA image, got {image.shape[2]} channels")
 
     # Convert BGRA (mss format) to RGBA for Pillow
     img_rgba = image[..., [2, 1, 0, 3]]
@@ -57,4 +61,6 @@ def draw_cursor(
         width=inner_width,
     )
 
-    return np.array(pil_img)
+    # Convert RGBA back to BGRA for mss compatibility
+    result = np.array(pil_img)
+    return result[..., [2, 1, 0, 3]]  # RGBA → BGRA
