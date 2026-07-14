@@ -1,1 +1,101 @@
-# cua.tools — Tool implementations for CUA agent
+"""Tool registry: collects all tool schemas and routes execution."""
+import json
+from typing import Any
+
+from cua.tools.screenshot import SCREENSHOT_SCHEMA, execute_screenshot
+from cua.tools.mouse import (
+    SET_MOUSE_SCHEMA, execute_set_mouse,
+    CLICK_SCHEMA, execute_click,
+    DRAG_SCHEMA, execute_drag,
+)
+from cua.tools.keyboard import TYPE_KEYS_SCHEMA, execute_type_keys
+from cua.tools.magnifier import MAGNIFIER_SCHEMA, execute_magnifier
+from cua.tools.ocr import OCR_SCHEMA, execute_ocr
+from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
+
+
+# All tool schemas sent to Kimi API (excluding web_search which is a builtin)
+TOOLS = [
+    SCREENSHOT_SCHEMA,
+    SET_MOUSE_SCHEMA,
+    CLICK_SCHEMA,
+    DRAG_SCHEMA,
+    TYPE_KEYS_SCHEMA,
+    MAGNIFIER_SCHEMA,
+    OCR_SCHEMA,
+    FINISH_SCHEMA,
+]
+
+# Kimi built-in web search tool
+WEB_SEARCH_TOOL = {
+    "type": "builtin_function",
+    "function": {"name": "$web_search"},
+}
+
+ALL_TOOLS = TOOLS + [WEB_SEARCH_TOOL]
+
+
+def execute_tool(
+    name: str,
+    args: dict,
+    sct: Any,
+    mouse_pos: tuple[float, float],
+    screen_w: int,
+    screen_h: int,
+    last_screenshot: Any,
+) -> dict:
+    """Route tool call to the correct implementation.
+
+    Returns a dict with keys:
+        content: list of message content blocks for the API
+        mouse_pos: updated mouse position (or None if unchanged)
+        last_screenshot: updated screenshot array (or same if unchanged)
+        _finish_report: only present for finish tool
+    """
+    if name == "screenshot":
+        return execute_screenshot(sct, mouse_pos, screen_w, screen_h)
+
+    elif name == "set_mouse":
+        return execute_set_mouse(
+            args["x"], args["y"], sct, screen_w, screen_h
+        )
+
+    elif name == "click":
+        return execute_click(
+            args["button"],
+            args["type"],
+            sct=sct,
+            mouse_pos=mouse_pos,
+            screen_w=screen_w,
+            screen_h=screen_h,
+        )
+
+    elif name == "drag":
+        return execute_drag(
+            args["from_x"], args["from_y"],
+            args["to_x"], args["to_y"],
+            sct, screen_w, screen_h,
+        )
+
+    elif name == "type_keys":
+        return execute_type_keys(
+            args["keys"], sct, mouse_pos, screen_w, screen_h
+        )
+
+    elif name == "magnifier":
+        return execute_magnifier(
+            sct, mouse_pos, screen_w, screen_h, last_screenshot
+        )
+
+    elif name == "ocr":
+        return execute_ocr(last_screenshot)
+
+    elif name == "finish":
+        return execute_finish(
+            args["success"],
+            args["summary"],
+            args["steps"],
+        )
+
+    else:
+        raise ValueError(f"Unknown tool: {name}")
