@@ -173,12 +173,36 @@ def run_task(task: str) -> dict:
                 if name == "finish" and "_finish_report" in result:
                     return result["_finish_report"]
 
-                # Append tool result to messages
+                # Separate image blocks from text blocks in tool result
+                content_items = result["content"]
+                text_items = []
+                image_items = []
+                for item in content_items:
+                    if item.get("type") == "image_url":
+                        image_items.append(item)
+                    else:
+                        text_items.append(item)
+
+                # Tool message: text only (Kimi API requires string content)
+                tool_text = " ".join(
+                    item.get("text", "") for item in text_items
+                )
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result["content"], ensure_ascii=False),
+                    "content": tool_text,
                 })
+
+                # If tool produced images, append a user message with them
+                # (Kimi API only renders image_url in user messages)
+                if image_items:
+                    user_content = image_items + [
+                        {"type": "text", "text": f"After {name}: {tool_text}"}
+                    ]
+                    messages.append({
+                        "role": "user",
+                        "content": user_content,
+                    })
 
         # Hit max iterations without finish
         return {

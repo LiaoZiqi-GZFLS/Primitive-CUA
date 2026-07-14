@@ -64,6 +64,8 @@ def execute_tool(
         return execute_click(
             args["button"],
             args["type"],
+            count=args.get("count", 1),
+            scroll=args.get("scroll", 0),
             sct=sct,
             mouse_pos=mouse_pos,
             screen_w=screen_w,
@@ -89,6 +91,16 @@ def execute_tool(
 
     elif name == "ocr":
         return execute_ocr(last_screenshot)
+
+    elif name == "$web_search":
+        # Kimi built-in web search — the actual search is executed server-side.
+        # We just acknowledge the call. The search results appear in the model's
+        # next response as part of the tool call flow.
+        return {
+            "content": [{"type": "text", "text": "ok"}],
+            "mouse_pos": None,
+            "last_screenshot": last_screenshot,
+        }
 
     elif name == "finish":
         return execute_finish(
