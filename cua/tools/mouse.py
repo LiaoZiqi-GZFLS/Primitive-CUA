@@ -23,7 +23,7 @@ def _norm(px: int, dim: int) -> float:
     return round(px / dim, 4)
 
 
-def _grab_screen(sct, screen_w: int, screen_h: int):
+def _grab_screen(sct):
     """Capture screen via mss, return BGRA numpy array."""
     return np.array(sct.grab(sct.monitors[1]))
 
@@ -61,7 +61,7 @@ def execute_set_mouse(
     time.sleep(0.05)
 
     # Take new screenshot
-    img = _grab_screen(sct, screen_w, screen_h)
+    img = _grab_screen(sct)
     from cua.overlay import draw_cursor
     annotated = draw_cursor(img, px, py, scale=1.0)
     new_mouse = (_norm(px, screen_w), _norm(py, screen_h))
@@ -120,12 +120,12 @@ CLICK_SCHEMA = {
 def execute_click(
     button: str,
     click_type: str,
-    count: int,
-    scroll: int,
     sct,
     mouse_pos: tuple,
     screen_w: int,
     screen_h: int,
+    count: int = 1,
+    scroll: int = 0,
 ) -> dict:
     """Execute mouse click at current position."""
     px = _denorm(mouse_pos[0], screen_w)
@@ -141,7 +141,7 @@ def execute_click(
 
     time.sleep(0.1)
 
-    img = _grab_screen(sct, screen_w, screen_h)
+    img = _grab_screen(sct)
     from cua.overlay import draw_cursor
     annotated = draw_cursor(img, px, py, scale=1.0)
 
@@ -203,7 +203,7 @@ def execute_drag(
     pyautogui.mouseUp()
     time.sleep(0.1)
 
-    img = _grab_screen(sct, screen_w, screen_h)
+    img = _grab_screen(sct)
     from cua.overlay import draw_cursor
     new_mouse = (_norm(tpx, screen_w), _norm(tpy, screen_h))
     annotated = draw_cursor(img, tpx, tpy, scale=1.0)
