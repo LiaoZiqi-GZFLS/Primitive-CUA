@@ -13,6 +13,7 @@ def main():
     print("=" * 60)
     print("CUA - Computer Use Agent")
     print(f"  LLM: {model}")
+    print("  Press Ctrl+C during a task to cancel it.")
     print("  Type a task to begin, or 'quit' to exit.")
     print("=" * 60)
 
@@ -21,8 +22,7 @@ def main():
     if args:
         task = " ".join(args)
         print(f"\nTask: {task}\n")
-        report = run_task(task, config)
-        _print_report(report)
+        _run_with_cancel(task, config)
         return
 
     # Interactive mode
@@ -40,8 +40,17 @@ def main():
             break
 
         print()
+        _run_with_cancel(task, config)
+
+
+def _run_with_cancel(task: str, config: dict):
+    """Run a task, handling Ctrl+C gracefully."""
+    try:
         report = run_task(task, config)
         _print_report(report)
+    except KeyboardInterrupt:
+        print("\n  ⏹ Task cancelled.")
+        print()
 
 
 def _print_report(report: dict):
