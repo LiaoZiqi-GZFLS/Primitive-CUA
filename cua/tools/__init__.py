@@ -15,6 +15,7 @@ from cua.tools.clipboard import (
     READ_CLIPBOARD_SCHEMA, execute_read_clipboard,
     PASTE_TEXT_SCHEMA, execute_paste_text,
 )
+from cua.tools.think import THINK_SCHEMA, execute_think
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -29,6 +30,7 @@ TOOLS = [
     OCR_SCHEMA,
     READ_CLIPBOARD_SCHEMA,
     PASTE_TEXT_SCHEMA,
+    THINK_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -115,6 +117,9 @@ def execute_tool(
             "mouse_pos": None,
             "last_screenshot": last_screenshot,
         }
+
+    elif name == "think":
+        return execute_think()
 
     elif name == "finish":
         return execute_finish(

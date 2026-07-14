@@ -27,6 +27,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **web_search(query)**: Search the web via Kimi built-in search.
 - **read_clipboard**: Read text content from the system clipboard. Use to check what was copied.
 - **paste_text(text)**: Paste text at the current cursor position via clipboard (Ctrl+V). Much faster than type_keys for long text. Use type_keys for short text or special keys, paste_text for bulk text.
+- **think**: Pause to reflect on progress and plan next steps. Use when you're stuck, unsure, or need to strategize. Does NOT perform any action — it gives you space to think before your next move.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
 ## Critical Rules
