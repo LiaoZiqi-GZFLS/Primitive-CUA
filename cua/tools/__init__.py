@@ -11,6 +11,10 @@ from cua.tools.mouse import (
 from cua.tools.keyboard import TYPE_KEYS_SCHEMA, execute_type_keys
 from cua.tools.magnifier import MAGNIFIER_SCHEMA, execute_magnifier
 from cua.tools.ocr import OCR_SCHEMA, execute_ocr
+from cua.tools.clipboard import (
+    READ_CLIPBOARD_SCHEMA, execute_read_clipboard,
+    PASTE_TEXT_SCHEMA, execute_paste_text,
+)
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -23,6 +27,8 @@ TOOLS = [
     TYPE_KEYS_SCHEMA,
     MAGNIFIER_SCHEMA,
     OCR_SCHEMA,
+    READ_CLIPBOARD_SCHEMA,
+    PASTE_TEXT_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -91,6 +97,14 @@ def execute_tool(
 
     elif name == "ocr":
         return execute_ocr(last_screenshot)
+
+    elif name == "read_clipboard":
+        return execute_read_clipboard()
+
+    elif name == "paste_text":
+        return execute_paste_text(
+            args["text"], sct, mouse_pos, screen_w, screen_h
+        )
 
     elif name == "$web_search":
         # Kimi built-in web search — the actual search is executed server-side.
