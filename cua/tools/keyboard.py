@@ -15,6 +15,7 @@ TYPE_KEYS_SCHEMA = {
             "type": "object",
             "properties": {
                 "keys": {
+                    "type": "string",
                     "description": "Text string to type, or array of key names for a key combination. Key names: ctrl, alt, shift, enter, tab, escape, backspace, delete, up, down, left, right, f1-f12, win, pageup, pagedown, home, end, space.",
                 }
             },

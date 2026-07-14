@@ -1,6 +1,7 @@
 """Magnifier tool: square crop centered on virtual mouse."""
 import numpy as np
 from cua.overlay import draw_cursor
+from cua.tools.mouse import _denorm
 from cua.tools.screenshot import _np_to_jpeg_b64
 
 
@@ -22,8 +23,8 @@ def execute_magnifier(
     last_screenshot: np.ndarray,
 ) -> dict:
     """Crop a square around the virtual mouse, with proportional overlay."""
-    px = round(mouse_pos[0] * screen_w)
-    py = round(mouse_pos[1] * screen_h)
+    px = _denorm(mouse_pos[0], screen_w)
+    py = _denorm(mouse_pos[1], screen_h)
     crop_side = min(screen_w, screen_h) // 2
     scale = crop_side / min(screen_w, screen_h)
 
