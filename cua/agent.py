@@ -12,6 +12,9 @@ from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.overlay import draw_cursor
 
+# Tools that modify system state — trigger auto-verification after execution
+VERIFY_TOOLS = {"click", "drag", "type_keys", "paste_text"}
+
 
 SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools. You operate in a tool-calling loop: you see screenshots, call tools to act, receive new screenshots, and continue until the task is done.
 
@@ -239,6 +242,74 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         "role": "user",
                         "content": user_content,
                     })
+
+                # Verify: after a state-modifying action, ask model to confirm success
+                if name in VERIFY_TOOLS:
+                    print(f"  [verify] checking if {name} succeeded...")
+                    # Build verify message with current screenshot
+                    px = round(mouse_pos[0] * screen_w)
+                    py = round(mouse_pos[1] * screen_h)
+                    annotated = draw_cursor(img, px, py, scale=1.0)
+                    img_rgb = img[..., [2, 1, 0]]
+                    annotated_rgb = annotated[..., [2, 1, 0]]
+                    verify_content = [
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+                        {
+                            "type": "text",
+                            "text": (
+                                f"You just called {name}. Here is the current screenshot.\n"
+                                f"Did the action succeed? Look at the screen and answer:\n"
+                                f"- If the expected change happened: respond 'OK' and continue.\n"
+                                f"- If something went wrong: respond 'FAIL' with a brief reason, "
+                                f"then you will get a chance to think and try an alternative."
+                            ),
+                        },
+                    ]
+                    messages.append({"role": "user", "content": verify_content})
+
+                    try:
+                        vr = client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            tools=ALL_TOOLS,
+                            max_tokens=max_tokens,
+                            extra_body={"thinking": {"type": "disabled"}},
+                        )
+                        vmsg = vr.choices[0].message
+                    except Exception as e:
+                        print(f"  [verify] API error, skipping: {e}")
+                        continue
+
+                    # Only verify if model gave a text response (not tool_calls)
+                    if not vmsg.tool_calls:
+                        verdict = (vmsg.content or "").strip().upper()
+                        print(f"  [verify] verdict: {verdict[:120]}")
+
+                        messages.append({"role": "assistant", "content": vmsg.content or ""})
+
+                        if verdict.startswith("FAIL") or "FAIL" in verdict[:10]:
+                            print(f"  [verify] action failed, injecting think...")
+                            from cua.tools.think import THINK_PROMPT
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"The {name} action may not have succeeded. "
+                                    f"Verdict: {vmsg.content}\n\n{THINK_PROMPT}"
+                                ),
+                            })
+                        # If OK, continue the main loop normally
+                    else:
+                        # Model called tools instead of text — treat as trying to fix
+                        print(f"  [verify] model wants to fix, treating as failure + think")
+                        from cua.tools.think import THINK_PROMPT
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"The {name} action may not have had the expected effect. "
+                                f"{THINK_PROMPT}"
+                            ),
+                        })
 
         return {
             "success": False,
