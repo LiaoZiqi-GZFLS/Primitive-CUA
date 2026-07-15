@@ -26,8 +26,8 @@ def _annotated_screenshot(
     return draw_cursor(original, px, py, scale)
 
 
-def _run_ocr(img: np.ndarray) -> str:
-    """Run RapidOCR on the screenshot, return text blocks as bracketed format."""
+def _run_ocr(img: np.ndarray, screen_w: int, screen_h: int) -> str:
+    """Run RapidOCR on the screenshot, return text blocks with normalized coordinates."""
     from rapidocr_onnxruntime import RapidOCR
 
     if img.shape[-1] == 4:
@@ -44,7 +44,10 @@ def _run_ocr(img: np.ndarray) -> str:
     blocks = []
     for item in result:
         text = item[1]
-        blocks.append(f"[{text}]")
+        bbox = item[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+        center_x = (bbox[0][0] + bbox[2][0]) / 2 / screen_w
+        center_y = (bbox[0][1] + bbox[2][1]) / 2 / screen_h
+        blocks.append(f"[{text}] ({center_x:.4f}, {center_y:.4f})")
 
     return " ".join(blocks)
 
@@ -79,7 +82,7 @@ def execute_screenshot(
     annotated_b64 = _np_to_jpeg_b64(annotated_rgb)
 
     # Run OCR on the screenshot
-    ocr_text = _run_ocr(img)
+    ocr_text = _run_ocr(img, screen_w, screen_h)
 
     return {
         "content": [

@@ -356,12 +356,15 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": (
-                                    f"Raw OCR from screenshot:\n{raw_ocr}\n\n"
+                                    f"Raw OCR from screenshot (normalized coordinates in parentheses):\n"
+                                    f"{raw_ocr}\n\n"
                                     f"Based on the screenshot and OCR text above, summarize "
-                                    f"information that is useful for the next action. Include: "
-                                    f"which windows are open, what buttons/menus/input fields "
-                                    f"are visible, where the cursor currently is, any relevant "
-                                    f"text content on screen. Be concise and actionable."
+                                    f"information that is useful for the next action. Use the "
+                                    f"coordinates to describe WHERE things are on screen "
+                                    f"(e.g. 'Start button at (0.05, 0.97), Notepad window centered at (0.5, 0.4)'). "
+                                    f"Include: which windows are open, where buttons/menus/input "
+                                    f"fields are located, any relevant text content. "
+                                    f"Be concise and actionable."
                                 )},
                             ],
                         })
