@@ -250,8 +250,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 # Verify + Think: after a state-modifying action, show before/after and reflect
                 if name in VERIFY_TOOLS:
-                    print(f"  [verify] waiting 0.5s, taking after-screenshot...")
-                    time.sleep(0.5)
+                    print(f"  [verify] waiting 1s, taking after-screenshot...")
+                    time.sleep(1.0)
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 
