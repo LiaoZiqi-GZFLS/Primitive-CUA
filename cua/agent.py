@@ -54,7 +54,9 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **web_navigate(url)**: Open a URL in the Playwright browser. Use for all web tasks.
 - **web_get_content()**: Extract structured page content (headings, buttons, links, inputs, text). Always prefer this over screenshot+OCR for web pages.
 - **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
-- **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling.
+- **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling. Press Enter with web_press('Enter') after filling to submit.
+- **web_press(key)**: Press a keyboard key on the page. Use 'Enter' to submit forms, 'Escape' to close modals, 'Tab' to switch focus.
+- **web_scroll(amount)**: Scroll the page. Positive=down, negative=up. Use 500 for a typical scroll.
 - **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Manage browser tabs.
 - **web_refresh / web_back / web_forward**: Page navigation (reload, back, forward).
 - **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.

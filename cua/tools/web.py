@@ -419,3 +419,61 @@ def execute_web_list_tabs() -> dict:
         }
     except Exception as e:
         return {"content": [{"type": "text", "text": f"List tabs failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+# --- Keyboard + scroll ---
+
+WEB_PRESS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_press",
+        "description": "Press a keyboard key on the web page. Use 'Enter' to submit forms, 'Escape' to close dialogs, 'Tab' to move focus, 'ArrowDown/Up' to navigate dropdowns, 'PageDown/Up' to scroll.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Key name: Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, PageDown, PageUp, Home, End, Backspace, Delete, Space"},
+            },
+            "required": ["key"],
+        },
+    },
+}
+
+
+WEB_SCROLL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_scroll",
+        "description": "Scroll the web page up or down. Positive = scroll down, negative = scroll up.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "integer", "description": "Pixels to scroll. Positive=down, negative=up. Use 500 for a typical page-down."},
+            },
+            "required": ["amount"],
+        },
+    },
+}
+
+
+def execute_web_press(key: str) -> dict:
+    try:
+        page = _get_page()
+        page.keyboard.press(key)
+        return {
+            "content": [{"type": "text", "text": f"Pressed: {key}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Press failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_scroll(amount: int) -> dict:
+    try:
+        page = _get_page()
+        page.evaluate(f"window.scrollBy(0, {amount})")
+        return {
+            "content": [{"type": "text", "text": f"Scrolled {amount}px {'down' if amount > 0 else 'up'}."}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Scroll failed: {e}"}], "mouse_pos": None, "last_screenshot": None}

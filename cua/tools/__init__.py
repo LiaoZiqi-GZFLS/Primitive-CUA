@@ -33,6 +33,8 @@ from cua.tools.web import (
     WEB_BACK_SCHEMA, execute_web_back,
     WEB_FORWARD_SCHEMA, execute_web_forward,
     WEB_LIST_TABS_SCHEMA, execute_web_list_tabs,
+    WEB_PRESS_SCHEMA, execute_web_press,
+    WEB_SCROLL_SCHEMA, execute_web_scroll,
 )
 from cua.tools.uia import (
     UIA_INSPECT_SCHEMA, execute_uia_inspect,
@@ -76,6 +78,8 @@ TOOLS = [
     WEB_BACK_SCHEMA,
     WEB_FORWARD_SCHEMA,
     WEB_LIST_TABS_SCHEMA,
+    WEB_PRESS_SCHEMA,
+    WEB_SCROLL_SCHEMA,
     UIA_INSPECT_SCHEMA,
     UIA_CLICK_SCHEMA,
     UIA_SET_VALUE_SCHEMA,
@@ -220,6 +224,12 @@ def execute_tool(
 
     elif name == "web_list_tabs":
         return execute_web_list_tabs()
+
+    elif name == "web_press":
+        return execute_web_press(args["key"])
+
+    elif name == "web_scroll":
+        return execute_web_scroll(args["amount"])
 
     elif name == "uia_inspect":
         return execute_uia_inspect(args.get("depth", 3))
