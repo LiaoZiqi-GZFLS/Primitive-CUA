@@ -72,8 +72,9 @@ def _cleanup_context(messages: list):
     """Remove stale image messages after a click.
 
     Cleans up:
-    1. All set_mouse/magnifier result images (positioning screenshots, no longer needed)
+    1. All set_mouse/magnifier result images
     2. All verify (BEFORE/AFTER) images except the most recent one
+    3. All images from user messages before the 5th-to-last click
     """
     # Find the index of the last verify message
     last_verify_idx = -1
@@ -89,6 +90,21 @@ def _cleanup_context(messages: list):
             if last_verify_idx >= 0:
                 break
 
+    # Find the position of the 5th-click-from-the-end
+    fifth_click_idx = -1
+    click_count = 0
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg["role"] == "assistant" and "tool_calls" in msg:
+            for tc in msg["tool_calls"]:
+                if tc.get("function", {}).get("name") == "click":
+                    click_count += 1
+                    if click_count == 5:
+                        fifth_click_idx = i
+                        break
+            if fifth_click_idx >= 0:
+                break
+
     removed = 0
     for i in range(len(messages)):
         msg = messages[i]
@@ -98,12 +114,10 @@ def _cleanup_context(messages: list):
         if not isinstance(content, list):
             continue
 
-        # Check if this message has images
         has_images = any(item.get("type") == "image_url" for item in content)
         if not has_images:
             continue
 
-        # Get the text content for classification
         full_text = " ".join(
             item.get("text", "") for item in content if item.get("type") == "text"
         )
@@ -111,24 +125,28 @@ def _cleanup_context(messages: list):
         should_clean = False
         reason = ""
 
-        # Clean set_mouse result images
+        # Rule 1: set_mouse/magnifier result images
         if "After set_mouse" in full_text or "After magnifier" in full_text:
             should_clean = True
             reason = "set_mouse/magnifier"
 
-        # Clean older verify images (not the most recent one)
+        # Rule 2: older verify images
         if "BEFORE" in full_text and i < last_verify_idx:
             should_clean = True
             reason = "old verify"
+
+        # Rule 3: before the 5th-to-last click
+        if fifth_click_idx >= 0 and i < fifth_click_idx:
+            should_clean = True
+            reason = "beyond 5-click window"
 
         if should_clean:
             new_content = []
             for item in content:
                 if item.get("type") == "image_url":
                     removed += 1
-                    continue  # drop the image
+                    continue
                 new_content.append(item)
-            # Add a placeholder so the message structure stays valid
             new_content.append({
                 "type": "text",
                 "text": f" [images cleaned: {reason}]",
