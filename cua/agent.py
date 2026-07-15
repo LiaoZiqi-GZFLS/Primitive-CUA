@@ -420,6 +420,57 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 elif n == "web_get_content" and latest_web.startswith("(no"):
                                     latest_web = m.get("content", "")
 
+                        # Build UIA tree with content
+                        uia_tree = "(UIA inspection not available)"
+                        try:
+                            from cua.tools.uia import _foreground_control
+                            fg = _foreground_control()
+                            if fg is not None:
+                                uia_lines = []
+
+                                def _build_uia_tree(ctrl, depth=0, max_depth=3):
+                                    if depth > max_depth:
+                                        return
+                                    indent = "  " * depth
+                                    name = ctrl.Name or ""
+                                    ctype = ctrl.ControlTypeName
+                                    auto_id = ctrl.AutomationId or ""
+
+                                    # Try to read value for editable/text controls
+                                    value = ""
+                                    if name and ctype in ("Edit", "Document", "Text", "DataItem"):
+                                        try:
+                                            vp = ctrl.GetValuePattern()
+                                            if vp.Value:
+                                                value = f' = "{vp.Value[:60]}"'
+                                        except Exception:
+                                            pass
+
+                                    label = f"{indent}{ctype}"
+                                    if name:
+                                        label += f" '{name}'"
+                                    if auto_id:
+                                        label += f" #{auto_id}"
+                                    if value:
+                                        label += value
+
+                                    rect = ctrl.BoundingRectangle
+                                    if rect and rect.width() > 0:
+                                        label += f" ({rect.left}, {rect.top})"
+
+                                    uia_lines.append(label)
+
+                                    for child in ctrl.GetChildren():
+                                        _build_uia_tree(child, depth + 1, max_depth)
+
+                                uia_lines.append(f"Active: {fg.Name}")
+                                _build_uia_tree(fg)
+                                uia_tree = "\n".join(uia_lines[:80])
+                        except Exception as e:
+                            uia_tree = f"(UIA inspection failed: {e})"
+
+                        print(f"  [ocr-clean] UIA tree: {len(uia_tree)} chars")
+
                         # Fork agent context. messages already includes the tool
                         # and user image messages from the screenshot result.
                         clean_messages = list(messages)
@@ -432,16 +483,18 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                     f"{raw_ocr}\n\n"
                                     f"Latest list_windows result:\n{latest_windows}\n\n"
                                     f"Latest web_get_content result:\n{latest_web}\n\n"
+                                    f"UIA control tree of foreground window (with content):\n"
+                                    f"{uia_tree}\n\n"
                                     f"Based on all the above, summarize what's useful for the next step.\n"
-                                    f"- Desktop UI: use list_windows + OCR to describe which windows are "
-                                    f"open and WHERE key elements are located using coordinates "
-                                    f"(e.g. 'Start button at (0.05, 0.97), Notepad at (0.5, 0.4)').\n"
-                                    f"- Web content: if web_get_content has data, use it to describe "
-                                    f"page elements. Suggest web tools (web_click, web_type) for "
-                                    f"precise interaction instead of coordinate clicking.\n"
-                                    f"- If there are input fields or search bars, note their location "
-                                    f"and suggest using paste_text for Chinese input.\n"
-                                    f"Be concise and actionable, under 300 characters."
+                                    f"- Desktop UI: use list_windows + OCR + UIA to describe windows, "
+                                    f"their controls, and WHERE key elements are (coordinates).\n"
+                                    f"- UIA controls: note buttons, menus, input fields with their names. "
+                                    f"Suggest uia_click/uia_set_value/uia_get_text for native apps "
+                                    f"instead of coordinate-based clicking.\n"
+                                    f"- Web content: if web_get_content has data, describe page elements. "
+                                    f"Suggest web tools for precise page interaction.\n"
+                                    f"- Note any input fields and suggest paste_text for Chinese input.\n"
+                                    f"Be concise and actionable, under 400 characters."
                                 )},
                             ],
                         })
