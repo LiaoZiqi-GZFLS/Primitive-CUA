@@ -167,8 +167,40 @@ def _cleanup_context(messages: list):
             })
             messages[i] = {"role": "user", "content": new_content}
 
-    if removed > 0:
-        print(f"  [cleanup] removed {removed} stale images from context")
+    # Rule 4: trim stale text from web_get_content / list_windows.
+    # Keep only the most recent result fully intact; truncate older ones.
+    trimmed = 0
+    last_web_content_idx = -1
+    last_list_windows_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg["role"] != "tool":
+            continue
+        name = msg.get("name", "")
+        if name == "web_get_content" and last_web_content_idx < 0:
+            last_web_content_idx = i
+        elif name == "list_windows" and last_list_windows_idx < 0:
+            last_list_windows_idx = i
+
+    for i in range(len(messages)):
+        msg = messages[i]
+        if msg["role"] != "tool":
+            continue
+        name = msg.get("name", "")
+        should_trim = False
+        if name == "web_get_content" and i < last_web_content_idx:
+            should_trim = True
+        elif name == "list_windows" and i < last_list_windows_idx:
+            should_trim = True
+
+        if should_trim:
+            content = msg.get("content", "")
+            first_line = content.split("\n")[0][:80] if content else ""
+            messages[i]["content"] = f" [trimmed] {first_line}..."
+            trimmed += 1
+
+    if removed > 0 or trimmed > 0:
+        print(f"  [cleanup] removed {removed} images, trimmed {trimmed} text messages from context")
 
 
 def run_task(task: str, config: dict | None = None) -> dict:
