@@ -28,7 +28,7 @@ overlay:
 learning:
   autoskill_enabled: true     # Auto-generate skills from successful tasks
   autoskill_min_steps: 3      # Min tool calls before extracting a skill
-  autoskill_max_skills: 50    # Max stored skills (oldest pruned)
+  autoskill_max_skills: 0     # Max stored skills (0=unlimited)
   reflection_enabled: true    # Analyze failures and inject into prompt
   reflection_max_prompt: 5    # Past reflections to include in system prompt
   learnings_max_prompt: 10    # Past learnings to include in system prompt

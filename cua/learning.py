@@ -99,15 +99,16 @@ def _init_db():
         conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
         conn.execute("DELETE FROM pending_learning WHERE settled=1 AND created_at < ?", (cutoff,))
 
-    # Prune skills if over max
-    max_skills = _cfg("autoskill_max_skills", 50)
-    count = conn.execute("SELECT COUNT(*) as n FROM skills_index").fetchone()["n"]
-    if count > max_skills:
-        excess = count - max_skills
-        conn.execute(
-            "DELETE FROM skills_index WHERE id IN (SELECT id FROM skills_index ORDER BY usage_count ASC, created_at ASC LIMIT ?)",
-            (excess,),
-        )
+    # Prune skills if over max (0 = unlimited, skip)
+    max_skills = _cfg("autoskill_max_skills", 0)
+    if max_skills > 0:
+        count = conn.execute("SELECT COUNT(*) as n FROM skills_index").fetchone()["n"]
+        if count > max_skills:
+            excess = count - max_skills
+            conn.execute(
+                "DELETE FROM skills_index WHERE id IN (SELECT id FROM skills_index ORDER BY usage_count ASC, created_at ASC LIMIT ?)",
+                (excess,),
+            )
 
     conn.commit()
     conn.close()
