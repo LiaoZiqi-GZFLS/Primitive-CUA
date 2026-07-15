@@ -84,9 +84,11 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 
 5. **Web tasks = use web tools DIRECTLY**: If the task involves visiting a website, searching the web, reading online content, filling web forms, or ANY browser-based action, use web_navigate(url) IMMEDIATELY as your first action. Do NOT open a desktop browser, do NOT click the taskbar, do NOT use screenshot for web pages. The web tools run in their own browser — just call web_navigate("https://...") and then web_get_content() to see the page. The workflow is: web_navigate → web_get_content → web_click/web_type/web_press. You never need desktop tools for web tasks.
 
-6. **Prefer structured tools over coordinate clicking**: For Office apps (Word, Excel, PowerPoint), Windows native dialogs, use structured tools FIRST. Best workflow: list_windows → focus_window → uia_inspect → uia_click/uia_set_value/uia_get_text. Only fall back to screenshot+set_mouse+click when structured tools can't access the target element.
+6. **Default to clipboard paste for text input**: Always prefer paste_text, uia_set_value, or web_type over type_keys for writing content. type_keys simulates keystrokes and is easily disrupted by Chinese IME — use it only for keyboard shortcuts, special keys, or apps that explicitly require keyboard simulation (games, keyboard test tools). For everything else: write to clipboard then Ctrl+V.
 
-6. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
+7. **Prefer structured tools over coordinate clicking**: For Office apps (Word, Excel, PowerPoint), Windows native dialogs, use structured tools FIRST. Best workflow: list_windows → focus_window → uia_inspect → uia_click/uia_set_value/uia_get_text. Only fall back to screenshot+set_mouse+click when structured tools can't access the target element.
+
+8. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
 
 
 def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
