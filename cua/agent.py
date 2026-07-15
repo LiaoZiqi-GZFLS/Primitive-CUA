@@ -199,14 +199,17 @@ def _cleanup_context(messages: list):
             })
             messages[i] = {"role": "user", "content": new_content}
 
-    # Track last occurrence of each tool for cleanup
+    # Track last occurrence of each tool + first think for preservation
     last_indices: dict[str, int] = {}
+    first_think_idx = -1
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
         if msg["role"] == "tool":
             name = msg.get("name", "")
             if name not in last_indices:
                 last_indices[name] = i
+            if name == "think":
+                first_think_idx = i  # the earliest think (round 0) gets the smallest i
 
     # Rule 4: trim stale text from ALL perception tools.
     # Keep only the most recent result per perception tool; wipe all older ones.
@@ -223,6 +226,8 @@ def _cleanup_context(messages: list):
             continue
         name = msg.get("name", "")
         if name in PERCEPTION_TOOLS and i < last_indices.get(name, i):
+            if i == first_think_idx:
+                continue  # never delete round 0 think
             content = msg.get("content", "")
             first_line = content.split("\n")[0][:80] if content else ""
             messages[i]["content"] = f" [trimmed] {first_line}..."
@@ -239,6 +244,8 @@ def _cleanup_context(messages: list):
             # Keep only the most recent output per tool
             if i >= last_indices.get(name, i):
                 continue
+            if i == first_think_idx:
+                continue  # never wipe round 0 think
             content = msg.get("content", "")
             if len(content) > 80:
                 messages[i]["content"] = f" [wiped] {content[:80]}..."
