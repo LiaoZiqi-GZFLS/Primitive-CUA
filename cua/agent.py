@@ -107,12 +107,28 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
 
-        # First message: text only, no screenshots — let agent plan before looking
+        # Main agent messages
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
+            },
+        ]
+
+        # Separate persistent context for the verify analyst
+        verify_analyst_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You analyze desktop screenshots to detect changes. "
+                    "You receive BEFORE and AFTER screenshots + OCR text from a desktop "
+                    "automation agent's actions. Compare them and output a concise summary:\n"
+                    "1. What visually changed on screen?\n"
+                    "2. Did the action succeed in producing the expected change?\n"
+                    "3. Any anomalies or unexpected changes?\n"
+                    "Keep your analysis under 200 characters in Chinese."
+                ),
             },
         ]
 
@@ -273,39 +289,35 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     after_ocr = _format_ocr(after_result)
                     print(f"  [verify] OCR: before={len(before_result or [])} blocks, after={len(after_result or [])} blocks")
 
-                    # Fresh LLM call to analyze OCR differences
+                    # Call verify analyst with persistent context + images
                     delta_summary = ""
                     try:
+                        verify_analyst_messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": f"BEFORE {name}:"},
+                                {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
+                                {"type": "text", "text": f"BEFORE OCR: {before_ocr}"},
+                                {"type": "text", "text": f"AFTER {name}:"},
+                                {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
+                                {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
+                                {"type": "text", "text": "Analyze: what changed? Did the action succeed?"},
+                            ],
+                        })
                         analysis = client.chat.completions.create(
                             model=model,
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "You analyze desktop changes by comparing OCR text from "
-                                        "BEFORE and AFTER screenshots. Output a concise summary "
-                                        "in Chinese: what windows opened/closed, what text "
-                                        "appeared/disappeared, what UI elements changed. "
-                                        "Be specific. Keep it under 200 characters."
-                                    ),
-                                },
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        f"BEFORE OCR:\n{before_ocr}\n\n"
-                                        f"AFTER OCR:\n{after_ocr}\n\n"
-                                        f"Action: {name}\n"
-                                        f"Analyze what changed on screen."
-                                    ),
-                                },
-                            ],
+                            messages=verify_analyst_messages,
                             max_tokens=256,
                             extra_body={"thinking": {"type": "disabled"}},
                         )
                         delta_summary = analysis.choices[0].message.content or ""
-                        print(f"  [verify] delta analysis: {delta_summary[:120]}")
+                        verify_analyst_messages.append({
+                            "role": "assistant",
+                            "content": delta_summary,
+                        })
+                        print(f"  [verify] analyst: {delta_summary[:120]}")
                     except Exception as e:
-                        print(f"  [verify] delta analysis failed: {e}")
+                        print(f"  [verify] analyst failed: {e}")
 
                     from cua.tools.think import THINK_PROMPT
 
@@ -319,7 +331,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         verify_content.append({
                             "type": "text",
                             "text": (
-                                f"OCR analysis of changes: {delta_summary}\n\n"
+                                f"Change analysis (from independent analyst): {delta_summary}\n\n"
                                 f"You just called {name}. Compare the BEFORE/AFTER screenshots "
                                 f"to verify the action's effect. Then reflect on what to do next.\n\n"
                                 f"{THINK_PROMPT}"
