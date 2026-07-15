@@ -62,10 +62,10 @@ def execute_set_mouse(
 
     # Take new screenshot (full-res for internal use, downscaled for VLM)
     img = _grab_screen(sct)
-    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
+    new_mouse = (_norm(px, screen_w), _norm(py, screen_h))
+    scaled_img, spx, spy = downsample_for_vlm(img, new_mouse, screen_w, screen_h)
     from cua.overlay import draw_cursor
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
-    new_mouse = (_norm(px, screen_w), _norm(py, screen_h))
 
     scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
