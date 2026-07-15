@@ -14,6 +14,14 @@ from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.learning import get_learnings_prompt
 from cua.overlay import draw_cursor
 
+# Module-level tool log for Ctrl+C recovery
+_current_tool_log: list[str] = []
+
+
+def get_last_tool_log() -> list[str]:
+    """Get tool calls from the most recent (possibly interrupted) task."""
+    return list(_current_tool_log)
+
 # Tools that modify system state — trigger auto-verification after execution
 VERIFY_TOOLS = {
     # Desktop action tools
@@ -419,8 +427,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
         learnings_text = get_learnings_prompt()
         system_content = SYSTEM_PROMPT + learnings_text
 
-        # Tool call log for post-task reflection
-        tool_calls_log = []
+        # Tool call log (module-level for Ctrl+C recovery)
+        _current_tool_log.clear()
 
         # Main agent messages
         messages = [
@@ -516,7 +524,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 if len(args_str) > 120:
                     args_str = args_str[:117] + "..."
                 print(f"  [{name}] {args_str}")
-                tool_calls_log.append(f"[{name}] {args_str}")
+                _current_tool_log.append(f"[{name}] {args_str}")
 
                 # Save before-screenshot for verify step
                 img_before = img.copy() if name in VERIFY_TOOLS else None
@@ -540,7 +548,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 if name == "finish" and "_finish_report" in result:
                     result["_finish_report"]["tokens"] = token_usage
-                    result["_finish_report"]["_tool_calls_log"] = tool_calls_log
+                    result["_finish_report"]["__current_tool_log"] = _current_tool_log
                     return result["_finish_report"]
 
                 content_items = result["content"]
@@ -810,5 +818,5 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
             "steps": [],
             "tokens": token_usage,
-            "_tool_calls_log": tool_calls_log,
+            "__current_tool_log": _current_tool_log,
         }

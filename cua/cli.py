@@ -67,10 +67,10 @@ def _run_with_cancel(task: str, config: dict, client: OpenAI, model: str):
     except KeyboardInterrupt:
         print("\n  ⏹ Task cancelled.")
         print()
-        # Save pending for later settlement (Layer 3)
         try:
-            # We don't have tool_log here, pass empty
-            save_pending(task, "User cancelled (Ctrl+C)", [])
+            from cua.agent import get_last_tool_log
+            tool_log = get_last_tool_log()
+            save_pending(task, "User cancelled (Ctrl+C)", tool_log)
         except Exception:
             pass
 
