@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pyautogui
 
-from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
+from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 
 # Fail-safe: move to corner to abort
 pyautogui.FAILSAFE = True
@@ -72,8 +72,8 @@ def execute_set_mouse(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {
                 "type": "text",
                 "text": f"Moved to ({new_mouse[0]:.4f}, {new_mouse[1]:.4f}) [pixel ({px}, {py})]",
@@ -156,8 +156,8 @@ def execute_click(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {
                 "type": "text",
                 "text": f"Clicked {button} {click_type} at ({mouse_pos[0]:.4f}, {mouse_pos[1]:.4f})"
@@ -225,8 +225,8 @@ def execute_drag(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {
                 "type": "text",
                 "text": (

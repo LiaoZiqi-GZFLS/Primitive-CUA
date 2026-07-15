@@ -2,7 +2,7 @@
 import numpy as np
 from cua.overlay import draw_cursor
 from cua.tools.mouse import _denorm
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_png_b64
 
 
 MAGNIFIER_SCHEMA = {
@@ -48,8 +48,8 @@ def execute_magnifier(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(crop_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(crop_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {
                 "type": "text",
                 "text": (

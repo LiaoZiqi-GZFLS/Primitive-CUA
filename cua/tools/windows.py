@@ -7,7 +7,7 @@ import pyautogui
 import pygetwindow as gw
 
 from cua.tools.mouse import _grab_screen, _denorm
-from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
+from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 
 
@@ -133,8 +133,8 @@ def execute_focus_window(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {"type": "text", "text": f"Focused window: {win.title}"},
         ],
         "mouse_pos": mouse_pos,
@@ -177,8 +177,8 @@ def execute_launch_app(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {"type": "text", "text": f"Launched: {name}"},
         ],
         "mouse_pos": mouse_pos,

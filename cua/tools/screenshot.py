@@ -59,14 +59,14 @@ def downsample_for_vlm(img: np.ndarray, mouse_pos: tuple[float, float], screen_w
     return scaled_img, px, py
 
 
-def _np_to_jpeg_b64(img: np.ndarray, quality: int = 85) -> str:
-    """Convert numpy array (RGBA or RGB) to base64 JPEG data URI."""
+def _np_to_png_b64(img: np.ndarray) -> str:
+    """Convert numpy array (RGB) to base64 PNG data URI."""
     if img.shape[-1] == 4:
         img = img[..., :3]
     pil_img = Image.fromarray(img, "RGB")
     buf = io.BytesIO()
-    pil_img.save(buf, format="JPEG", quality=quality)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    pil_img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def _annotated_screenshot(
@@ -146,8 +146,8 @@ def execute_screenshot(
     original_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
-    original_b64 = _np_to_jpeg_b64(original_rgb)
-    annotated_b64 = _np_to_jpeg_b64(annotated_rgb)
+    original_b64 = _np_to_png_b64(original_rgb)
+    annotated_b64 = _np_to_png_b64(annotated_rgb)
 
     # Run OCR on FULL-RES image (not downscaled)
     ocr_text = _run_ocr(img, screen_w, screen_h)

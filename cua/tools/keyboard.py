@@ -2,7 +2,7 @@
 import time
 import pyautogui
 from cua.tools.mouse import _grab_screen, _denorm
-from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
+from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 
 # All pyautogui-recognized special key names (lowercase for matching)
@@ -134,8 +134,8 @@ def execute_type_keys(
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
             {"type": "text", "text": f"Typed: {desc}"},
         ],
         "mouse_pos": mouse_pos,

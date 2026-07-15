@@ -10,7 +10,7 @@ from openai import OpenAI
 from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import build_tools
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_png_b64
 from cua.learning import get_learnings_prompt
 from cua.overlay import draw_cursor
 
@@ -756,10 +756,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": f"BEFORE {name}:"},
-                                {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
+                                {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
                                 {"type": "text", "text": f"BEFORE OCR: {before_ocr}"},
                                 {"type": "text", "text": f"AFTER {name}:"},
-                                {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
+                                {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
                                 {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
                                 {"type": "text", "text": (
                                     "You are analyzing whether this action succeeded. "
@@ -788,9 +788,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                     verify_content = [
                         {"type": "text", "text": f"BEFORE {name}:"},
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
+                        {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
                         {"type": "text", "text": f"AFTER {name}:"},
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
+                        {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
                     ]
                     if delta_summary:
                         verify_content.append({

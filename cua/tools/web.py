@@ -1,7 +1,7 @@
 """Web tools using Playwright: navigate, get_content, click, type."""
 import time
 
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_png_b64
 from cua.overlay import draw_cursor
 
 
