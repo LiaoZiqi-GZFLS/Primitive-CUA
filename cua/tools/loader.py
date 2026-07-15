@@ -1,25 +1,15 @@
-"""Dynamic tool loader: classify task and load only relevant tools to save tokens."""
+"""Dynamic tool loader: classify task with LLM and load only relevant tools."""
 
 # --- Tool group definitions ---
 
 BASE_TOOLS = [
-    "screenshot",       # screen capture
-    "set_mouse",        # cursor positioning
-    "click",            # mouse click
-    "drag",             # mouse drag
-    "type_keys",        # keyboard input
-    "magnifier",        # zoom inspect
-    "ocr",              # text recognition
-    "paste_text",       # clipboard paste
-    "read_clipboard",   # clipboard read
-    "think",            # reflection
-    "note",             # notepad
-    "wait",             # delay
-    "file_read",        # file I/O
-    "file_write",       # file I/O
-    "finish",           # task end
-    "request_human_help",  # human assistance
-    "$web_search",      # Kimi built-in search
+    "screenshot", "set_mouse", "click", "drag",
+    "type_keys", "magnifier", "ocr",
+    "paste_text", "read_clipboard",
+    "think", "note", "wait",
+    "file_read", "file_write",
+    "finish", "request_human_help",
+    "$web_search",
 ]
 
 WEB_TOOLS = [
@@ -37,8 +27,63 @@ WINDOWS_TOOLS = [
     "list_windows", "focus_window", "launch_app",
 ]
 
+# --- LLM classification ---
 
-# --- Classification keywords ---
+CLASSIFY_PROMPT = """Classify this desktop automation task. Which tools are needed?
+
+Task: {task}
+
+Categories:
+- web: tasks involving browsers, websites, search, login, forms, shopping, online content
+- uia: tasks involving Office apps (Word/Excel/PPT), Notepad, native Windows dialogs, controls, menus
+- windows: desktop window management (always true for non-trivial desktop tasks)
+
+Return JSON with: needs_web (bool), needs_uia (bool), reasoning (string, brief)."""
+
+
+def _classify_llm(task: str, client, model: str) -> dict:
+    """Use LLM with json_schema to classify the task."""
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You classify desktop automation tasks. Output valid JSON only."},
+                {"role": "user", "content": CLASSIFY_PROMPT.format(task=task)},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "task_classification",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "needs_web": {"type": "boolean"},
+                            "needs_uia": {"type": "boolean"},
+                            "reasoning": {"type": "string"},
+                        },
+                        "required": ["needs_web", "needs_uia", "reasoning"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            max_tokens=200,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        import json
+        result = json.loads(resp.choices[0].message.content)
+        return {
+            "needs_web": result.get("needs_web", False),
+            "needs_uia": result.get("needs_uia", False),
+            "needs_windows": True,
+            "reasoning": result.get("reasoning", ""),
+        }
+    except Exception as e:
+        print(f"  [loader] LLM classification failed ({e}), falling back to keyword match")
+        return None
+
+
+# --- Keyword fallback ---
 
 WEB_KEYWORDS = [
     "网页", "浏览器", "搜索", "百度", "谷歌", "google", "baidu",
@@ -51,8 +96,8 @@ WEB_KEYWORDS = [
 UIA_KEYWORDS = [
     "word", "excel", "ppt", "powerpoint", "outlook",
     "office", "文档", "表格", "幻灯片", "演示",
-    "记事本", "notepad", "写字板", "wordpad",
-    "对话框", "控件", "窗口", "菜单栏", "工具栏",
+    "记事本", "notepad",
+    "对话框", "控件", "菜单栏", "工具栏",
     "另存为", "保存为", "导出", "打印",
     "设置", "控制面板", "属性",
     "visual studio", "vscode", "vs code",
@@ -60,39 +105,43 @@ UIA_KEYWORDS = [
 ]
 
 
-def classify_task(task: str) -> dict[str, bool]:
-    """Classify a task to determine which tool groups are needed.
-
-    Returns dict with keys: needs_web, needs_uia, needs_windows
-    """
+def _classify_keywords(task: str) -> dict:
+    """Keyword-based classification fallback."""
     task_lower = task.lower()
-
-    needs_web = any(kw in task_lower for kw in WEB_KEYWORDS)
-    needs_uia = any(kw in task_lower for kw in UIA_KEYWORDS)
-
-    # Windows tools are almost always useful for desktop tasks
-    needs_windows = True
-
     return {
-        "needs_web": needs_web,
-        "needs_uia": needs_uia,
-        "needs_windows": needs_windows,
+        "needs_web": any(kw in task_lower for kw in WEB_KEYWORDS),
+        "needs_uia": any(kw in task_lower for kw in UIA_KEYWORDS),
+        "needs_windows": True,
+        "reasoning": "keyword match",
     }
 
 
-def build_tools(task: str):
+# --- Main API ---
+
+def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
     """Build the tools list based on task classification.
 
-    Returns (tools_list, classification_info_string)
+    Args:
+        task: User's task description
+        client: OpenAI client (for LLM classification). If None, uses keyword fallback.
+        model: Model name for classification
+
+    Returns:
+        (tool_names_list, info_string, classification_dict)
     """
-    c = classify_task(task)
+    # Try LLM classification first
+    c = None
+    if client is not None:
+        c = _classify_llm(task, client, model)
+
+    if c is None:
+        c = _classify_keywords(task)
 
     tool_names = list(BASE_TOOLS)
-    tool_names.extend(WINDOWS_TOOLS)  # windows tools always loaded
+    tool_names.extend(WINDOWS_TOOLS)
 
     if c["needs_web"]:
         tool_names.extend(WEB_TOOLS)
-
     if c["needs_uia"]:
         tool_names.extend(UIA_TOOLS)
 
@@ -102,4 +151,5 @@ def build_tools(task: str):
     if c["needs_uia"]:
         info_parts.append(f"UIA({len(UIA_TOOLS)})")
 
-    return tool_names, " + ".join(info_parts), c
+    info = " + ".join(info_parts) + f" [{c.get('reasoning', '')}]"
+    return tool_names, info, c

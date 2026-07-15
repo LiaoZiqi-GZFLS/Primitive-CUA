@@ -250,12 +250,13 @@ def run_task(task: str, config: dict | None = None) -> dict:
     max_tokens = config.get("max_tokens", 32768)
     max_iterations = config.get("max_iterations", 50)
 
-    # Dynamically load tools based on task classification
-    tool_names, tool_info, task_class = build_tools(task)
+    # Create client first (needed for LLM classification)
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
+    # Dynamically load tools based on LLM task classification
+    tool_names, tool_info, task_class = build_tools(task, client, model)
     active_tools = [t for t in ALL_TOOLS if t["function"]["name"] in tool_names]
     print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
 
