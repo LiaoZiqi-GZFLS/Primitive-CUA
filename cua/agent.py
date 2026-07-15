@@ -64,8 +64,15 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h, img):
             "text": (
                 f"Task: {task}\n"
                 f"Screen resolution: {screen_w}x{screen_h}\n"
-                f"Virtual mouse starts at: ({mouse_pos[0]:.4f}, {mouse_pos[1]:.4f})\n"
-                f"Look at the screenshots and start working on the task."
+                f"Virtual mouse starts at: ({mouse_pos[0]:.4f}, {mouse_pos[1]:.4f})\n\n"
+                f"Before you begin:\n"
+                f"1. If this is a purely informational task that requires no desktop action "
+                f"(e.g. answering a question, looking something up), call finish() directly.\n"
+                f"2. Otherwise, first use think() to plan your approach: "
+                f"analyze the screenshots, assess the current state, "
+                f"and outline the steps needed.\n"
+                f"3. Before each action, confirm the current state matches your expectation "
+                f"by checking the screenshot. Then explain your reasoning and act."
             ),
         },
     ]
