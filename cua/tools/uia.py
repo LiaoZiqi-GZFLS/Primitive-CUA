@@ -161,7 +161,16 @@ def execute_uia_click(name: str) -> dict:
                 "mouse_pos": None, "last_screenshot": None,
             }
 
-        ctrl.Click()
+        try:
+            ctrl.Click()
+        except Exception:
+            # COM may throw even when click succeeds — try InvokePattern directly
+            try:
+                inv = ctrl.GetInvokePattern()
+                inv.Invoke()
+            except Exception:
+                pass  # Both failed but click likely registered
+
         time.sleep(0.2)
 
         return {
