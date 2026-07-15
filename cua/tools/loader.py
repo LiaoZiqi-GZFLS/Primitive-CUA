@@ -9,8 +9,6 @@ BASE_TOOLS = [
     "think", "note", "wait",
     "file_read", "file_write",
     "finish", "request_human_help",
-    "DraftContent", "GenerateImage",
-    "ReadDocument", "ListDocuments", "DeleteDocument", "CleanupDocuments",
     "$web_search",
 ]
 
@@ -29,18 +27,33 @@ WINDOWS_TOOLS = [
     "list_windows", "focus_window", "launch_app",
 ]
 
+CONTENT_TOOLS = [
+    "DraftContent",             # content writing subagent
+    "GenerateImage",            # SVG image generation subagent
+]
+
+DOCUMENT_TOOLS = [
+    "ReadDocument",             # upload + extract via Kimi Files API
+    "ListDocuments",            # list uploaded files
+    "DeleteDocument",           # delete single file
+    "CleanupDocuments",         # clean up all files
+]
+
+
 # --- LLM classification ---
 
-CLASSIFY_PROMPT = """Classify this desktop automation task. Which tools are needed?
+CLASSIFY_PROMPT = """Classify this desktop automation task. Which tool groups are needed?
 
 Task: {task}
 
 Categories:
-- web: tasks involving browsers, websites, search, login, forms, shopping, online content
-- uia: tasks involving Office apps (Word/Excel/PPT), Notepad, native Windows dialogs, controls, menus
-- windows: desktop window management (always true for non-trivial desktop tasks)
+- web: browsers, websites, search, login, forms, shopping, online content
+- uia: Office apps (Word/Excel/PPT), Notepad, native Windows dialogs/controls
+- content: writing articles/emails/reports/posts, generating images/icons/illustrations
+- document: reading/extracting PDF/DOCX files, OCR, managing uploaded documents
+- windows: desktop window management (always loaded)
 
-Return JSON with: needs_web (bool), needs_uia (bool), reasoning (string, brief)."""
+Return JSON with: needs_web (bool), needs_uia (bool), needs_content (bool), needs_document (bool), reasoning (string, brief)."""
 
 
 def _classify_llm(task: str, client, model: str) -> dict:
@@ -62,9 +75,11 @@ def _classify_llm(task: str, client, model: str) -> dict:
                         "properties": {
                             "needs_web": {"type": "boolean"},
                             "needs_uia": {"type": "boolean"},
+                            "needs_content": {"type": "boolean"},
+                            "needs_document": {"type": "boolean"},
                             "reasoning": {"type": "string"},
                         },
-                        "required": ["needs_web", "needs_uia", "reasoning"],
+                        "required": ["needs_web", "needs_uia", "needs_content", "needs_document", "reasoning"],
                         "additionalProperties": False,
                     },
                 },
@@ -77,6 +92,8 @@ def _classify_llm(task: str, client, model: str) -> dict:
         return {
             "needs_web": result.get("needs_web", False),
             "needs_uia": result.get("needs_uia", False),
+            "needs_content": result.get("needs_content", False),
+            "needs_document": result.get("needs_document", False),
             "needs_windows": True,
             "reasoning": result.get("reasoning", ""),
         }
@@ -106,6 +123,19 @@ UIA_KEYWORDS = [
     "原生", "桌面应用", "程序窗口",
 ]
 
+CONTENT_KEYWORDS = [
+    "写", "文章", "邮件", "报告", "文案", "总结",
+    "生成", "画", "图", "图标", "插画", "示意图",
+    "draft", "write", "article", "email", "image", "icon",
+    "创作", "写作", "编写", "撰写",
+]
+
+DOCUMENT_KEYWORDS = [
+    "pdf", "docx", "文档", "文件", "读取", "导入",
+    "read", "extract", "document", "file",
+    "ocr", "识别", "提取",
+]
+
 
 def _classify_keywords(task: str) -> dict:
     """Keyword-based classification fallback."""
@@ -113,6 +143,8 @@ def _classify_keywords(task: str) -> dict:
     return {
         "needs_web": any(kw in task_lower for kw in WEB_KEYWORDS),
         "needs_uia": any(kw in task_lower for kw in UIA_KEYWORDS),
+        "needs_content": any(kw in task_lower for kw in CONTENT_KEYWORDS),
+        "needs_document": any(kw in task_lower for kw in DOCUMENT_KEYWORDS),
         "needs_windows": True,
         "reasoning": "keyword match",
     }
@@ -121,17 +153,7 @@ def _classify_keywords(task: str) -> dict:
 # --- Main API ---
 
 def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
-    """Build the tools list based on task classification.
-
-    Args:
-        task: User's task description
-        client: OpenAI client (for LLM classification). If None, uses keyword fallback.
-        model: Model name for classification
-
-    Returns:
-        (tool_names_list, info_string, classification_dict)
-    """
-    # Try LLM classification first
+    """Build the tools list based on task classification."""
     c = None
     if client is not None:
         c = _classify_llm(task, client, model)
@@ -142,16 +164,24 @@ def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
     tool_names = list(BASE_TOOLS)
     tool_names.extend(WINDOWS_TOOLS)
 
-    if c["needs_web"]:
+    if c.get("needs_web"):
         tool_names.extend(WEB_TOOLS)
-    if c["needs_uia"]:
+    if c.get("needs_uia"):
         tool_names.extend(UIA_TOOLS)
+    if c.get("needs_content"):
+        tool_names.extend(CONTENT_TOOLS)
+    if c.get("needs_document"):
+        tool_names.extend(DOCUMENT_TOOLS)
 
     info_parts = [f"Base+Windows({len(BASE_TOOLS) + len(WINDOWS_TOOLS)})"]
-    if c["needs_web"]:
+    if c.get("needs_web"):
         info_parts.append(f"Web({len(WEB_TOOLS)})")
-    if c["needs_uia"]:
+    if c.get("needs_uia"):
         info_parts.append(f"UIA({len(UIA_TOOLS)})")
+    if c.get("needs_content"):
+        info_parts.append(f"Content({len(CONTENT_TOOLS)})")
+    if c.get("needs_document"):
+        info_parts.append(f"Document({len(DOCUMENT_TOOLS)})")
 
     info = " + ".join(info_parts) + f" [{c.get('reasoning', '')}]"
     return tool_names, info, c
