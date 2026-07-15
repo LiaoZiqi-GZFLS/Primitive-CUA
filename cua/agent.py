@@ -337,6 +337,55 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         "content": user_content,
                     })
 
+                # OCR cleaning: after screenshot, refine OCR with context-aware LLM
+                if name == "screenshot":
+                    print(f"  [ocr-clean] refining OCR with context...")
+                    try:
+                        # Extract raw OCR text from the tool result
+                        raw_ocr = ""
+                        for item in result["content"]:
+                            if item.get("type") == "text":
+                                raw_ocr = item.get("text", "")
+                                break
+
+                        # Fork agent context. messages already includes the tool
+                        # and user image messages from the screenshot result.
+                        clean_messages = list(messages)
+
+                        clean_messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": (
+                                    f"Raw OCR from screenshot:\n{raw_ocr}\n\n"
+                                    f"Clean this OCR text. Keep only text blocks that are "
+                                    f"operationally useful for desktop automation — window titles, "
+                                    f"button labels, menu items, input fields, file names, text content. "
+                                    f"Remove noise like timestamps, status bar numbers, decorative elements. "
+                                    f"Output the cleaned text in the same format: each text block "
+                                    f"wrapped in [brackets], blocks separated by spaces. "
+                                    f"Keep it concise."
+                                )},
+                            ],
+                        })
+                        clean_resp = client.chat.completions.create(
+                            model=model,
+                            messages=clean_messages,
+                            max_tokens=512,
+                            extra_body={"thinking": {"type": "disabled"}},
+                        )
+                        cleaned_ocr = clean_resp.choices[0].message.content or ""
+                        print(f"  [ocr-clean] cleaned: {cleaned_ocr[:120]}")
+
+                        # Append cleaned OCR as a user message for the agent
+                        messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": f"Cleaned OCR text: {cleaned_ocr}"},
+                            ],
+                        })
+                    except Exception as e:
+                        print(f"  [ocr-clean] failed: {e}")
+
                 # Verify + Think: after a state-modifying action, show before/after and reflect
                 if name in VERIFY_TOOLS:
                     print(f"  [verify] waiting 1s, taking after-screenshot...")
