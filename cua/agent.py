@@ -10,7 +10,7 @@ from openai import OpenAI
 from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import build_tools
-from cua.tools.screenshot import _np_to_png_b64
+from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.learning import get_learnings_prompt
 from cua.overlay import draw_cursor
 
