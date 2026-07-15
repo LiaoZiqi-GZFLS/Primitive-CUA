@@ -9,6 +9,31 @@ from PIL import Image
 from cua.overlay import draw_cursor
 
 
+def _downscale(img: np.ndarray, screen_w: int, screen_h: int) -> tuple[np.ndarray, float]:
+    """Tiered downscaling to reduce VLM token consumption.
+
+    Returns (resized_image, scale_factor).
+    """
+    max_dim = max(screen_w, screen_h)
+    if max_dim <= 1920:
+        return img, 1.0  # 1080p — keep original
+    elif max_dim <= 4096:
+        # 2K/4K — divide by 2 (75% pixel reduction)
+        factor = 2
+    else:
+        # 8K+ — divide by 4 (93% pixel reduction)
+        factor = 4
+
+    h, w = img.shape[:2]
+    new_w, new_h = w // factor, h // factor
+    pil = Image.fromarray(img[..., [2, 1, 0, 3]] if img.shape[-1] == 4 else img)
+    pil = pil.resize((new_w, new_h), Image.LANCZOS)
+    result = np.array(pil)
+    if img.shape[-1] == 4:
+        result = result[..., [2, 1, 0, 3]]  # RGBA → BGRA
+    return result, float(factor)
+
+
 def _np_to_jpeg_b64(img: np.ndarray, quality: int = 85) -> str:
     """Convert numpy array (RGBA or RGB) to base64 JPEG data URI."""
     if img.shape[-1] == 4:
@@ -80,22 +105,26 @@ def execute_screenshot(
     sct: Any, mouse_pos: tuple[float, float], screen_w: int, screen_h: int
 ) -> dict:
     """Take a screenshot and return original + annotated as base64 JPEG + OCR text."""
-    # Capture
+    # Capture full-res for OCR/magnifier
     monitor = sct.monitors[1]
     img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
 
-    px = round(mouse_pos[0] * screen_w)
-    py = round(mouse_pos[1] * screen_h)
+    # Tiered downscaling for VLM images
+    scaled_img, _ = _downscale(img, screen_w, screen_h)
+    scaled_h, scaled_w = scaled_img.shape[:2]
 
-    annotated = _annotated_screenshot(img, px, py, scale=1.0)
+    px = round(mouse_pos[0] * scaled_w)
+    py = round(mouse_pos[1] * scaled_h)
 
-    original_rgb = img[..., [2, 1, 0]]
+    annotated = _annotated_screenshot(scaled_img, px, py, scale=1.0)
+
+    original_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     original_b64 = _np_to_jpeg_b64(original_rgb)
     annotated_b64 = _np_to_jpeg_b64(annotated_rgb)
 
-    # Run OCR on the screenshot
+    # Run OCR on FULL-RES image (not downscaled)
     ocr_text = _run_ocr(img, screen_w, screen_h)
 
     return {
@@ -105,7 +134,7 @@ def execute_screenshot(
             {
                 "type": "text",
                 "text": (
-                    f"Screen: {screen_w}x{screen_h}. "
+                    f"Screen: {scaled_w}x{scaled_h} (from {screen_w}x{screen_h}). "
                     f"Virtual mouse: ({mouse_pos[0]:.4f}, {mouse_pos[1]:.4f})\n"
                     f"OCR text: {ocr_text}"
                 ),
