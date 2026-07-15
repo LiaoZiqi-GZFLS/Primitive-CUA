@@ -24,12 +24,12 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **set_mouse(x, y)**: Move virtual mouse to normalized coordinates (0.0-1.0, 4 decimal places).
 - **click(button, type, count, scroll)**: Click at current mouse position. button: left/right/middle. type: single/double. count: number of clicks. scroll: positive=up, negative=down.
 - **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another.
-- **type_keys(keys)**: Type text ("hello world"), press a special key ("enter", "tab", "escape", "backspace", "f5"), or press a combo ("ctrl+c", "alt+tab", "win+r").
+- **type_keys(keys)**: Type ASCII text ONLY (English letters, numbers, symbols), press a special key ("enter", "tab", "escape", "backspace", "f5"), or press a key combo ("ctrl+c", "alt+tab", "win+r"). CANNOT type Chinese/Unicode — use paste_text for that.
 - **magnifier**: Square crop centered on cursor, side = half the shorter screen edge. Use for fine details.
 - **ocr**: Run OCR on the current screenshot. Returns text blocks with positions and confidence.
 - **web_search(query)**: Search the web via Kimi built-in search.
 - **read_clipboard**: Read text content from the system clipboard. Use to check what was copied.
-- **paste_text(text)**: Paste text at the current cursor position via clipboard (Ctrl+V). Much faster than type_keys for long text. Use type_keys for short text or special keys, paste_text for bulk text.
+- **paste_text(text)**: Paste text via clipboard + Ctrl+V. REQUIRED for Chinese, Japanese, emoji, or any non-ASCII text — type_keys cannot type these. Also use for long text. First paste may trigger IME, try twice if needed.
 - **think**: Pause to reflect on progress and plan next steps. Use when you're stuck, unsure, or need to strategize. Does NOT perform any action — it gives you space to think before your next move.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
