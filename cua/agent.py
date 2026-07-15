@@ -548,7 +548,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 if name == "finish" and "_finish_report" in result:
                     result["_finish_report"]["tokens"] = token_usage
-                    result["_finish_report"]["__current_tool_log"] = _current_tool_log
+                    result["_finish_report"]["_tool_calls_log"] = _current_tool_log
                     return result["_finish_report"]
 
                 content_items = result["content"]
@@ -818,5 +818,5 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
             "steps": [],
             "tokens": token_usage,
-            "__current_tool_log": _current_tool_log,
+            "_tool_calls_log": _current_tool_log,
         }
