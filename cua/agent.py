@@ -254,6 +254,106 @@ def _cleanup_context(messages: list):
     if removed > 0 or trimmed > 0 or wiped > 0:
         print(f"  [cleanup] removed {removed} images, trimmed {trimmed} perception, wiped {wiped} old tool outputs from context")
 
+    return action_count
+
+
+def _compress_context(messages: list, client, model: str, max_tokens: int):
+    """LLM compression: summarize the earliest rounds into one concise record."""
+    # Find the 10th state-changing action position
+    action_count = 0
+    tenth_action_idx = -1
+    for i in range(len(messages)):
+        msg = messages[i]
+        if msg["role"] == "assistant" and "tool_calls" in msg:
+            for tc in msg["tool_calls"]:
+                if tc.get("function", {}).get("name") in VERIFY_TOOLS:
+                    action_count += 1
+                    if action_count == 10:
+                        tenth_action_idx = i
+                        break
+        if tenth_action_idx >= 0:
+            break
+
+    if tenth_action_idx < 0:
+        return  # Not enough actions yet
+
+    # Collect messages to compress: everything from start up to the 10th action
+    to_compress = []
+    keep = []
+    for i, msg in enumerate(messages):
+        if i <= tenth_action_idx:
+            # Skip system prompt and the first think result
+            if i == 0:  # system prompt
+                keep.append(msg)
+                continue
+            if msg["role"] == "tool" and msg.get("name") == "think":
+                keep.append(msg)  # preserve round-0 think
+                continue
+            to_compress.append(msg)
+        else:
+            keep.append(msg)
+
+    if len(to_compress) < 5:
+        return  # Too little to compress
+
+    print(f"  [compress] summarizing {len(to_compress)} messages from early rounds...")
+
+    try:
+        # Build a text representation of what happened
+        trace = []
+        for msg in to_compress:
+            role = msg["role"]
+            if role == "user":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    texts = [item.get("text", "") for item in content if item.get("type") == "text"]
+                    trace.append(f"user: {' '.join(texts)[:200]}")
+                elif isinstance(content, str):
+                    trace.append(f"user: {content[:200]}")
+            elif role == "assistant":
+                tc = msg.get("tool_calls", [])
+                if tc:
+                    names = [t.get("function", {}).get("name", "?") for t in tc]
+                    trace.append(f"assistant: called {', '.join(names)}")
+                elif msg.get("content"):
+                    trace.append(f"assistant: {msg['content'][:150]}")
+            elif role == "tool":
+                trace.append(f"tool({msg.get('name','?')}): {msg.get('content','')[:150]}")
+
+        trace_text = "\n".join(trace[-50:])  # last 50 entries for compression
+
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "Summarize this desktop automation trace into ONE concise paragraph. Include: what the user asked for, what actions were taken, what was accomplished in these rounds, any important findings (window positions, file paths, errors). Keep it under 300 characters. Write in Chinese if the original task was in Chinese."},
+                {"role": "user", "content": trace_text},
+            ],
+            max_tokens=300,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        summary = resp.choices[0].message.content or ""
+
+        # Replace: keep system prompt + first think, then compressed summary, then the rest
+        compressed_msg = {
+            "role": "user",
+            "content": [{"type": "text", "text": f"[Compressed early rounds]\n{summary}"}],
+        }
+
+        # Find where to insert: after system + first think
+        insert_pos = 1  # after system prompt
+        for i in range(1, len(keep)):
+            if keep[i]["role"] == "tool" and keep[i].get("name") == "think":
+                insert_pos = i + 1
+                break
+
+        keep.insert(insert_pos, compressed_msg)
+        messages[:] = keep
+
+        print(f"  [compress] context reduced from {len(to_compress) + len(keep)} to {len(messages)} messages")
+
+    except Exception as e:
+        print(f"  [compress] failed: {e}")
+
 
 def run_task(task: str, config: dict | None = None) -> dict:
     """Run a single task. Returns the finish report.
@@ -290,6 +390,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
     print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
+    _context_compressed = False
 
     from cua.tools.utility import clear_notes
     clear_notes()
@@ -682,7 +783,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 # Context cleanup after state-changing actions
                 if name in VERIFY_TOOLS:
-                    _cleanup_context(messages)
+                    ac = _cleanup_context(messages)
+                    # After 20+ actions, compress early rounds via LLM (once)
+                    if ac >= 20 and not _context_compressed:
+                        _compress_context(messages, client, model, max_tokens)
+                        _context_compressed = True
 
         return {
             "success": False,
