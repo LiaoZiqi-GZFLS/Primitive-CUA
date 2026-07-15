@@ -66,25 +66,7 @@ def _classify_llm(task: str, client, model: str) -> dict:
                 {"role": "system", "content": "You classify desktop automation tasks. Output valid JSON only."},
                 {"role": "user", "content": CLASSIFY_PROMPT.format(task=task)},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "task_classification",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "needs_web": {"type": "boolean"},
-                            "needs_uia": {"type": "boolean"},
-                            "needs_content": {"type": "boolean"},
-                            "needs_document": {"type": "boolean"},
-                            "reasoning": {"type": "string"},
-                        },
-                        "required": ["needs_web", "needs_uia", "needs_content", "needs_document", "reasoning"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
+            response_format={"type": "json_object"},
             max_tokens=200,
             extra_body={"thinking": {"type": "disabled"}},
         )

@@ -194,25 +194,7 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
                     f'"prerequisites": "what must be true before using"}}'
                 )},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "skill_extraction",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "description": {"type": "string"},
-                            "steps": {"type": "array", "items": {"type": "string"}},
-                            "tools_used": {"type": "array", "items": {"type": "string"}},
-                            "prerequisites": {"type": "string"},
-                        },
-                        "required": ["name", "description", "steps", "tools_used", "prerequisites"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
+            response_format={"type": "json_object"},
             max_tokens=400,
             extra_body={"thinking": {"type": "disabled"}},
         )
@@ -366,22 +348,7 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
                     f'{{"reason": "why it failed", "fix": "how to fix it next time"}}'
                 )},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "failure_analysis",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "reason": {"type": "string"},
-                            "fix": {"type": "string"},
-                        },
-                        "required": ["reason", "fix"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
+            response_format={"type": "json_object"},
             max_tokens=256,
             extra_body={"thinking": {"type": "disabled"}},
         )
@@ -436,22 +403,7 @@ def settle_pending(client, model: str):
                     {"role": "system", "content": "Determine if an interrupted task was completed. Output JSON: {\"completed\": true/false, \"summary\": \"...\"}"},
                     {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "settlement",
-                        "strict": True,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "completed": {"type": "boolean"},
-                                "summary": {"type": "string"},
-                            },
-                            "required": ["completed", "summary"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
+                response_format={"type": "json_object"},
                 max_tokens=200,
                 extra_body={"thinking": {"type": "disabled"}},
             )
