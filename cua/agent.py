@@ -79,11 +79,13 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Manage browser tabs.
 - **web_refresh / web_back / web_forward**: Page navigation (reload, back, forward).
 - **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
-- **memory(action, key, value?)**: Save to or recall from Kimi's remote persistent memory. Use action='save' to store skills and findings, action='recall' to retrieve. Memory persists across all sessions.
-- **rethink(content)**: Use Kimi's AI to reorganize and consolidate ideas. Pass accumulated notes or reflections for intelligent summarization.
+- **memory(action, key, value?)**: Remote persistent memory across all sessions. Use action='save' to store important findings (window positions, icon locations, successful workflows). Use action='recall' to check if you've solved a similar problem before. Memory is your long-term memory — use it proactively.
+- **rethink(content)**: AI-driven consolidation. Use to summarize and reorganize your accumulated knowledge mid-task — pass your notes and findings for intelligent compression.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
 ## Critical Rules
+
+0. **Use memory proactively**: recall related memories at task start to see if you've done this before. Save key findings during the task (window locations, file paths, successful strategies) — don't wait until finish. Use rethink after accumulating 5+ notes to consolidate.
 
 1. **ALWAYS end with finish()**: You are in a tool-calling loop. You CANNOT output text directly as a final response. The ONLY way to communicate your final result to the user is by calling the finish() tool. If the task is done, call finish(). If you're stuck or the task is impossible, call finish(success=false, ...). Never output a text summary without also calling finish().
 
@@ -434,9 +436,19 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Tool call log (module-level for Ctrl+C recovery)
         _current_tool_log.clear()
 
-        # Main agent messages
+        # Main agent messages (startup recall hint)
         messages = [
             {"role": "system", "content": system_content},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        f"Task: {task}\n"
+                        f"Before starting, consider: have you done similar tasks before? "
+                        f"Use memory(action='recall', key='...') to check for past learnings."
+                    )},
+                ],
+            },
             {
                 "role": "user",
                 "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
@@ -826,6 +838,19 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 if name in VERIFY_TOOLS:
                     _total_action_count += 1
                     _cleanup_context(messages)
+
+                    # Every 5 actions, nudge to use memory if not used recently
+                    if _total_action_count > 0 and _total_action_count % 5 == 0:
+                        messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": (
+                                    f"You've taken {_total_action_count} actions. "
+                                    "Consider saving key findings to memory(action='save'). "
+                                    "If you've accumulated many notes, use rethink() to consolidate."
+                                )},
+                            ],
+                        })
                     # Every 10 actions beyond 20, compress the oldest 10
                     if _total_action_count >= _compressed_up_to + 20:
                         _compress_context(messages, client, model, max_tokens, _compressed_up_to)
