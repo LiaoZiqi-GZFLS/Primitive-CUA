@@ -27,6 +27,7 @@ from cua.tools.web import (
     WEB_CLICK_SCHEMA, execute_web_click,
     WEB_TYPE_SCHEMA, execute_web_type,
 )
+from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -49,6 +50,7 @@ TOOLS = [
     WEB_GET_CONTENT_SCHEMA,
     WEB_CLICK_SCHEMA,
     WEB_TYPE_SCHEMA,
+    HUMAN_HELP_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -163,6 +165,9 @@ def execute_tool(
 
     elif name == "web_type":
         return execute_web_type(args["label"], args["text"])
+
+    elif name == "request_human_help":
+        return execute_human_help(args["request"])
 
     elif name == "finish":
         return execute_finish(

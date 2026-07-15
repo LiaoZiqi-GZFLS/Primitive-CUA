@@ -45,6 +45,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **web_get_content()**: Extract page title, headings, buttons, links, inputs, text. Use instead of screenshot+OCR for web pages.
 - **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
 - **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling.
+- **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
 ## Critical Rules
