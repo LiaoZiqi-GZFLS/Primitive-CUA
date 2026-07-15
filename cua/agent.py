@@ -116,22 +116,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
             },
         ]
 
-        # Separate persistent context for the verify analyst
-        verify_analyst_messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You analyze desktop screenshots to detect changes. "
-                    "You receive BEFORE and AFTER screenshots + OCR text from a desktop "
-                    "automation agent's actions. Compare them and output a concise summary:\n"
-                    "1. What visually changed on screen?\n"
-                    "2. Did the action succeed in producing the expected change?\n"
-                    "3. Any anomalies or unexpected changes?\n"
-                    "Keep your analysis under 200 characters in Chinese."
-                ),
-            },
-        ]
-
         for iteration in range(max_iterations):
             # Near the limit, inject a strong reminder
             if iteration == max_iterations - 3:
@@ -289,10 +273,12 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     after_ocr = _format_ocr(after_result)
                     print(f"  [verify] OCR: before={len(before_result or [])} blocks, after={len(after_result or [])} blocks")
 
-                    # Call verify analyst with persistent context + images
+                    # Fork agent context for the analyst — inherits all agent history,
+                    # but the analyst's response does NOT go back into agent context.
                     delta_summary = ""
                     try:
-                        verify_analyst_messages.append({
+                        analyst_messages = list(messages)  # shallow copy of agent history
+                        analyst_messages.append({
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": f"BEFORE {name}:"},
@@ -301,20 +287,21 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 {"type": "text", "text": f"AFTER {name}:"},
                                 {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
                                 {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
-                                {"type": "text", "text": "Analyze: what changed? Did the action succeed?"},
+                                {"type": "text", "text": (
+                                    "You are analyzing whether this action succeeded. "
+                                    "Compare BEFORE and AFTER screenshots and OCR. "
+                                    "Output a concise summary in Chinese under 200 chars: "
+                                    "what changed and whether the action had the expected effect."
+                                )},
                             ],
                         })
                         analysis = client.chat.completions.create(
                             model=model,
-                            messages=verify_analyst_messages,
+                            messages=analyst_messages,
                             max_tokens=256,
                             extra_body={"thinking": {"type": "disabled"}},
                         )
                         delta_summary = analysis.choices[0].message.content or ""
-                        verify_analyst_messages.append({
-                            "role": "assistant",
-                            "content": delta_summary,
-                        })
                         print(f"  [verify] analyst: {delta_summary[:120]}")
                     except Exception as e:
                         print(f"  [verify] analyst failed: {e}")
