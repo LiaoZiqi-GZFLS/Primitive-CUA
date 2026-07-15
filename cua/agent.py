@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
+from cua.tools.loader import build_tools
 from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.overlay import draw_cursor
 
@@ -249,6 +250,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
     max_tokens = config.get("max_tokens", 32768)
     max_iterations = config.get("max_iterations", 50)
 
+    # Dynamically load tools based on task classification
+    tool_names, tool_info, task_class = build_tools(task)
+    active_tools = [t for t in ALL_TOOLS if t["function"]["name"] in tool_names]
+    print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
+
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
@@ -292,7 +298,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 response = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    tools=ALL_TOOLS,
+                    tools=active_tools,
                     max_tokens=max_tokens,
                     extra_body={"thinking": {"type": "disabled"}},
                 )
