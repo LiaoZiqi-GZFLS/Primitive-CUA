@@ -444,8 +444,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 "content": [
                     {"type": "text", "text": (
                         f"Task: {task}\n"
-                        f"Before starting, consider: have you done similar tasks before? "
-                        f"Use memory(action='recall', key='...') to check for past learnings."
+                        f"Tip: recall past learnings with memory(action='recall'). "
+                        f"Save new findings with memory(action='save') during the task."
                     )},
                 ],
             },
