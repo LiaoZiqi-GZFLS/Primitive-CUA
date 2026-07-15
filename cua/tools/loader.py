@@ -147,7 +147,7 @@ def _search_similar(task_summary: str, top_n: int = 5) -> str:
         lines = []
         for i, (sid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
             sim = 1.0 - dist  # cosine distance → similarity
-            if sim < 0.4:  # skip low-relevance results
+            if sim < 0.1:  # skip noise (cross-lingual scores are low with MiniLM)
                 continue
             doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
             lines.append(f"- [{sim:.0%}] {doc[:150]}")
@@ -174,7 +174,7 @@ def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
     task_summary = c.get("summary", task[:80])
     similar = _search_similar(task_summary)
     if similar:
-        count = similar.count("\n- ")
+        count = similar.count("- [")
         print(f"  [memory] found {count} relevant past skill(s) for: {task_summary[:60]}")
 
     tool_names = list(BASE_TOOLS)
