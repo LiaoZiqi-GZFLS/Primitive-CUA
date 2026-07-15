@@ -195,6 +195,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     args_str = args_str[:117] + "..."
                 print(f"  [{name}] {args_str}")
 
+                # Save before-screenshot for verify step
+                img_before = img.copy() if name in VERIFY_TOOLS else None
+
                 try:
                     result = execute_tool(
                         name, args, sct, mouse_pos, screen_w, screen_h, img
@@ -243,75 +246,48 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         "content": user_content,
                     })
 
-                # Verify: after a state-modifying action, ask model to confirm success
+                # Verify + Think: after a state-modifying action, show before/after and reflect
                 if name in VERIFY_TOOLS:
-                    print(f"  [verify] waiting 0.5s then checking if {name} succeeded...")
+                    print(f"  [verify] waiting 0.5s, taking after-screenshot...")
                     time.sleep(0.5)
-                    # Take a fresh screenshot so UI has time to update
-                    img = np.array(sct.grab(monitor))
+                    img_after = np.array(sct.grab(monitor))
+                    img = img_after  # update current screenshot
+
                     px = round(mouse_pos[0] * screen_w)
                     py = round(mouse_pos[1] * screen_h)
-                    annotated = draw_cursor(img, px, py, scale=1.0)
-                    img_rgb = img[..., [2, 1, 0]]
-                    annotated_rgb = annotated[..., [2, 1, 0]]
+
+                    # Before screenshot (no annotation — clean original)
+                    before_rgb = img_before[..., [2, 1, 0]]
+                    before_annotated = draw_cursor(img_before, px, py, scale=1.0)
+                    before_annotated_rgb = before_annotated[..., [2, 1, 0]]
+
+                    # After screenshot
+                    after_rgb = img_after[..., [2, 1, 0]]
+                    after_annotated = draw_cursor(img_after, px, py, scale=1.0)
+                    after_annotated_rgb = after_annotated[..., [2, 1, 0]]
+
+                    from cua.tools.think import THINK_PROMPT
+
                     verify_content = [
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
+                        {"type": "text", "text": f"BEFORE {name} (original):"},
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
+                        {"type": "text", "text": f"BEFORE {name} (annotated):"},
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_annotated_rgb)}},
+                        {"type": "text", "text": f"AFTER {name} (original):"},
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
+                        {"type": "text", "text": f"AFTER {name} (annotated):"},
+                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_annotated_rgb)}},
                         {
                             "type": "text",
                             "text": (
-                                f"You just called {name}. Here is the current screenshot.\n"
-                                f"Did the action succeed? Look at the screen and answer:\n"
-                                f"- If the expected change happened: respond 'OK' and continue.\n"
-                                f"- If something went wrong: respond 'FAIL' with a brief reason, "
-                                f"then you will get a chance to think and try an alternative."
+                                f"You just called {name}. Above are BEFORE and AFTER screenshots.\n"
+                                f"Examine them carefully to verify whether the action had the "
+                                f"expected effect. Then reflect on what to do next.\n\n"
+                                f"{THINK_PROMPT}"
                             ),
                         },
                     ]
                     messages.append({"role": "user", "content": verify_content})
-
-                    try:
-                        vr = client.chat.completions.create(
-                            model=model,
-                            messages=messages,
-                            tools=ALL_TOOLS,
-                            max_tokens=max_tokens,
-                            extra_body={"thinking": {"type": "disabled"}},
-                        )
-                        vmsg = vr.choices[0].message
-                    except Exception as e:
-                        print(f"  [verify] API error, skipping: {e}")
-                        continue
-
-                    # Only verify if model gave a text response (not tool_calls)
-                    if not vmsg.tool_calls:
-                        verdict = (vmsg.content or "").strip().upper()
-                        print(f"  [verify] verdict: {verdict[:120]}")
-
-                        messages.append({"role": "assistant", "content": vmsg.content or ""})
-
-                        if verdict.startswith("FAIL") or "FAIL" in verdict[:10]:
-                            print(f"  [verify] action failed, injecting think...")
-                            from cua.tools.think import THINK_PROMPT
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    f"The {name} action may not have succeeded. "
-                                    f"Verdict: {vmsg.content}\n\n{THINK_PROMPT}"
-                                ),
-                            })
-                        # If OK, continue the main loop normally
-                    else:
-                        # Model called tools instead of text — treat as trying to fix
-                        print(f"  [verify] model wants to fix, treating as failure + think")
-                        from cua.tools.think import THINK_PROMPT
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                f"The {name} action may not have had the expected effect. "
-                                f"{THINK_PROMPT}"
-                            ),
-                        })
 
         return {
             "success": False,
