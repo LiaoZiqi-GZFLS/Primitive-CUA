@@ -253,36 +253,23 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 
-                    px = round(mouse_pos[0] * screen_w)
-                    py = round(mouse_pos[1] * screen_h)
-
-                    # Before screenshot (no annotation — clean original)
                     before_rgb = img_before[..., [2, 1, 0]]
-                    before_annotated = draw_cursor(img_before, px, py, scale=1.0)
-                    before_annotated_rgb = before_annotated[..., [2, 1, 0]]
-
-                    # After screenshot
                     after_rgb = img_after[..., [2, 1, 0]]
-                    after_annotated = draw_cursor(img_after, px, py, scale=1.0)
-                    after_annotated_rgb = after_annotated[..., [2, 1, 0]]
 
                     from cua.tools.think import THINK_PROMPT
 
                     verify_content = [
-                        {"type": "text", "text": f"BEFORE {name} (original):"},
+                        {"type": "text", "text": f"BEFORE {name}:"},
                         {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
-                        {"type": "text", "text": f"BEFORE {name} (annotated):"},
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_annotated_rgb)}},
-                        {"type": "text", "text": f"AFTER {name} (original):"},
+                        {"type": "text", "text": f"AFTER {name}:"},
                         {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
-                        {"type": "text", "text": f"AFTER {name} (annotated):"},
-                        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_annotated_rgb)}},
                         {
                             "type": "text",
                             "text": (
-                                f"You just called {name}. Above are BEFORE and AFTER screenshots.\n"
-                                f"Examine them carefully to verify whether the action had the "
-                                f"expected effect. Then reflect on what to do next.\n\n"
+                                f"You just called {name}. Above are BEFORE and AFTER screenshots "
+                                f"(without cursor overlay). Compare them carefully to verify "
+                                f"whether the action had the expected effect. "
+                                f"Then reflect on what to do next.\n\n"
                                 f"{THINK_PROMPT}"
                             ),
                         },
