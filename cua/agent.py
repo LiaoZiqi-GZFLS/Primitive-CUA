@@ -83,12 +83,12 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
 
 
 def _cleanup_context(messages: list):
-    """Remove stale image messages after a click.
+    """Remove stale image messages after a state-changing action.
 
     Cleans up:
     1. All set_mouse/magnifier result images
     2. All verify (BEFORE/AFTER) images except the most recent one
-    3. All images from user messages before the 5th-to-last click
+    3. All images from user messages before the 5th-to-last state-changing action
     """
     # Find the index of the last verify message
     last_verify_idx = -1
@@ -104,19 +104,19 @@ def _cleanup_context(messages: list):
             if last_verify_idx >= 0:
                 break
 
-    # Find the position of the 5th-click-from-the-end
-    fifth_click_idx = -1
-    click_count = 0
+    # Find the position of the 5th-to-last state-changing action (click, web_click, focus_window, etc.)
+    fifth_action_idx = -1
+    action_count = 0
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
         if msg["role"] == "assistant" and "tool_calls" in msg:
             for tc in msg["tool_calls"]:
-                if tc.get("function", {}).get("name") == "click":
-                    click_count += 1
-                    if click_count == 5:
-                        fifth_click_idx = i
+                if tc.get("function", {}).get("name") in VERIFY_TOOLS:
+                    action_count += 1
+                    if action_count == 5:
+                        fifth_action_idx = i
                         break
-            if fifth_click_idx >= 0:
+            if fifth_action_idx >= 0:
                 break
 
     removed = 0
@@ -149,10 +149,10 @@ def _cleanup_context(messages: list):
             should_clean = True
             reason = "old verify"
 
-        # Rule 3: before the 5th-to-last click
-        if fifth_click_idx >= 0 and i < fifth_click_idx:
+        # Rule 3: before the 5th-to-last state-changing action
+        if fifth_action_idx >= 0 and i < fifth_action_idx:
             should_clean = True
-            reason = "beyond 5-click window"
+            reason = "beyond 5-action window"
 
         if should_clean:
             new_content = []
