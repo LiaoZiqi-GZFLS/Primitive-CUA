@@ -477,7 +477,7 @@ def settle_pending(client, model: str):
 
 def reflect_and_learn(task: str, report: dict, tool_log: list[str], client, model: str):
     """Unified post-task learning. Best-effort, never blocks."""
-    print()
+    print(f"  [learn] post-task analysis: {len(tool_log)} tool calls, success={report.get('success')}")
     # Layer 1: AutoSkill (success only)
     autoskill_learn(task, report, tool_log, client, model)
     # Layer 2: Reflection (failure only)
