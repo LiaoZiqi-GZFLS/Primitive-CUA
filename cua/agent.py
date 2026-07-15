@@ -357,13 +357,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             "content": [
                                 {"type": "text", "text": (
                                     f"Raw OCR from screenshot:\n{raw_ocr}\n\n"
-                                    f"Clean this OCR text. Keep only text blocks that are "
-                                    f"operationally useful for desktop automation — window titles, "
-                                    f"button labels, menu items, input fields, file names, text content. "
-                                    f"Remove noise like timestamps, status bar numbers, decorative elements. "
-                                    f"Output the cleaned text in the same format: each text block "
-                                    f"wrapped in [brackets], blocks separated by spaces. "
-                                    f"Keep it concise."
+                                    f"Based on the screenshot and OCR text above, summarize "
+                                    f"information that is useful for the next action. Include: "
+                                    f"which windows are open, what buttons/menus/input fields "
+                                    f"are visible, where the cursor currently is, any relevant "
+                                    f"text content on screen. Be concise and actionable."
                                 )},
                             ],
                         })
