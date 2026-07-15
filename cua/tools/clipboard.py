@@ -4,7 +4,7 @@ import pyperclip
 import pyautogui
 
 from cua.tools.mouse import _grab_screen, _denorm
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 
 
@@ -70,15 +70,16 @@ def execute_paste_text(
     px = _denorm(mouse_pos[0], screen_w)
     py = _denorm(mouse_pos[1], screen_h)
     img = _grab_screen(sct)
-    annotated = draw_cursor(img, px, py, scale=1.0)
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     preview = text[:80] + "..." if len(text) > 80 else text
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {"type": "text", "text": f"Pasted ({len(text)} chars): {preview}"},
         ],

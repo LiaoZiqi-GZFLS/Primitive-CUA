@@ -34,6 +34,18 @@ def _downscale(img: np.ndarray, screen_w: int, screen_h: int) -> tuple[np.ndarra
     return result, float(factor)
 
 
+def downsample_for_vlm(img: np.ndarray, mouse_pos: tuple[float, float], screen_w: int, screen_h: int):
+    """Downscale image and compute overlay pixel coords. Used by all image tools.
+
+    Returns (img_scaled, px, py) where (px, py) are cursor coords in the downscaled image.
+    """
+    scaled_img, factor = _downscale(img, screen_w, screen_h)
+    sh, sw = scaled_img.shape[:2]
+    px = round(mouse_pos[0] * sw)
+    py = round(mouse_pos[1] * sh)
+    return scaled_img, px, py
+
+
 def _np_to_jpeg_b64(img: np.ndarray, quality: int = 85) -> str:
     """Convert numpy array (RGBA or RGB) to base64 JPEG data URI."""
     if img.shape[-1] == 4:

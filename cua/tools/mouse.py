@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pyautogui
 
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
 
 # Fail-safe: move to corner to abort
 pyautogui.FAILSAFE = True
@@ -60,19 +60,19 @@ def execute_set_mouse(
     pyautogui.moveTo(px, py)
     time.sleep(0.05)
 
-    # Take new screenshot
+    # Take new screenshot (full-res for internal use, downscaled for VLM)
     img = _grab_screen(sct)
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
     from cua.overlay import draw_cursor
-    annotated = draw_cursor(img, px, py, scale=1.0)
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
     new_mouse = (_norm(px, screen_w), _norm(py, screen_h))
 
-    # Convert BGRA to RGB for JPEG
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {
                 "type": "text",
@@ -147,15 +147,16 @@ def execute_click(
     time.sleep(0.1)
 
     img = _grab_screen(sct)
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
     from cua.overlay import draw_cursor
-    annotated = draw_cursor(img, px, py, scale=1.0)
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {
                 "type": "text",
@@ -214,16 +215,17 @@ def execute_drag(
     time.sleep(0.1)
 
     img = _grab_screen(sct)
-    from cua.overlay import draw_cursor
     new_mouse = (_norm(tpx, screen_w), _norm(tpy, screen_h))
-    annotated = draw_cursor(img, tpx, tpy, scale=1.0)
+    scaled_img, spx, spy = downsample_for_vlm(img, new_mouse, screen_w, screen_h)
+    from cua.overlay import draw_cursor
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {
                 "type": "text",

@@ -7,7 +7,7 @@ import pyautogui
 import pygetwindow as gw
 
 from cua.tools.mouse import _grab_screen, _denorm
-from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.tools.screenshot import _np_to_jpeg_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 
 
@@ -125,16 +125,15 @@ def execute_focus_window(
 
     # Take screenshot to confirm
     img = _grab_screen(sct)
-    px = _denorm(mouse_pos[0], screen_w)
-    py = _denorm(mouse_pos[1], screen_h)
-    annotated = draw_cursor(img, px, py, scale=1.0)
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {"type": "text", "text": f"Focused window: {win.title}"},
         ],
@@ -170,16 +169,15 @@ def execute_launch_app(
     time.sleep(1.0)
 
     img = _grab_screen(sct)
-    px = _denorm(mouse_pos[0], screen_w)
-    py = _denorm(mouse_pos[1], screen_h)
-    annotated = draw_cursor(img, px, py, scale=1.0)
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
-    img_rgb = img[..., [2, 1, 0]]
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
     annotated_rgb = annotated[..., [2, 1, 0]]
 
     return {
         "content": [
-            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(scaled_rgb)}},
             {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
             {"type": "text", "text": f"Launched: {name}"},
         ],
