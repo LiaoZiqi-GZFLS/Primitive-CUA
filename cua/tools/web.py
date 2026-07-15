@@ -234,3 +234,188 @@ def execute_web_type(label: str, text: str) -> dict:
             "mouse_pos": None,
             "last_screenshot": None,
         }
+
+
+# --- Browser navigation tools ---
+
+WEB_NEW_TAB_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_new_tab",
+        "description": "Open a new browser tab and switch to it.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+WEB_SWITCH_TAB_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_switch_tab",
+        "description": "Switch to a browser tab by index (1-based). Use web_list_tabs first to see available tabs.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer", "description": "Tab index to switch to (1-based)"},
+            },
+            "required": ["index"],
+        },
+    },
+}
+
+
+WEB_CLOSE_TAB_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_close_tab",
+        "description": "Close the current browser tab. If it's the last tab, the browser window closes.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+WEB_REFRESH_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_refresh",
+        "description": "Refresh/reload the current page.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+WEB_BACK_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_back",
+        "description": "Go back to the previous page in browser history.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+WEB_FORWARD_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_forward",
+        "description": "Go forward to the next page in browser history.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+WEB_LIST_TABS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "web_list_tabs",
+        "description": "List all open browser tabs with their titles and URLs.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+
+def execute_web_new_tab() -> dict:
+    try:
+        from playwright.sync_api import sync_playwright
+        page = _get_page()
+        ctx = page.context
+        new_page = ctx.new_page()
+        global _page
+        _page = new_page
+        return {
+            "content": [{"type": "text", "text": "Opened new tab."}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"New tab failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_switch_tab(index: int) -> dict:
+    try:
+        page = _get_page()
+        pages = page.context.pages
+        if index < 1 or index > len(pages):
+            return {
+                "content": [{"type": "text", "text": f"Tab {index} out of range. {len(pages)} tabs available."}],
+                "mouse_pos": None, "last_screenshot": None,
+            }
+        global _page
+        _page = pages[index - 1]
+        _page.bring_to_front()
+        return {
+            "content": [{"type": "text", "text": f"Switched to tab {index}/{len(pages)}: {_page.title()}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Switch tab failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_close_tab() -> dict:
+    try:
+        page = _get_page()
+        pages = page.context.pages
+        if len(pages) <= 1:
+            return {
+                "content": [{"type": "text", "text": "Last tab — closing it will close the browser. Use web_navigate to open a URL first if you want to keep browsing."}],
+                "mouse_pos": None, "last_screenshot": None,
+            }
+        page.close()
+        global _page
+        _page = page.context.pages[-1]
+        return {
+            "content": [{"type": "text", "text": f"Tab closed. Now on: {_page.title()}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Close tab failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_refresh() -> dict:
+    try:
+        page = _get_page()
+        page.reload(wait_until="domcontentloaded")
+        return {
+            "content": [{"type": "text", "text": f"Page refreshed: {page.title()}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Refresh failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_back() -> dict:
+    try:
+        page = _get_page()
+        page.go_back(wait_until="domcontentloaded")
+        return {
+            "content": [{"type": "text", "text": f"Back to: {page.title()} ({page.url[:80]})"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Back failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_forward() -> dict:
+    try:
+        page = _get_page()
+        page.go_forward(wait_until="domcontentloaded")
+        return {
+            "content": [{"type": "text", "text": f"Forward to: {page.title()} ({page.url[:80]})"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"Forward failed: {e}"}], "mouse_pos": None, "last_screenshot": None}
+
+
+def execute_web_list_tabs() -> dict:
+    try:
+        page = _get_page()
+        pages = page.context.pages
+        tabs = []
+        for i, p in enumerate(pages, 1):
+            tabs.append(f"  [{i}] {p.title()[:60]} — {p.url[:80]}")
+        return {
+            "content": [{"type": "text", "text": f"{len(pages)} tabs open:\n" + "\n".join(tabs)}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"List tabs failed: {e}"}], "mouse_pos": None, "last_screenshot": None}

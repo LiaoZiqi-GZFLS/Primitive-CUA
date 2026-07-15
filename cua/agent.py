@@ -52,9 +52,11 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **uia_set_value(name, value)**: Set the value of an input/editable control by name. Uses UIA Value pattern for precise text entry in Office and native app fields. Supports Chinese.
 - **uia_get_text(name)**: Read text/value from a control by name. Use to read document content, cell values, status text.
 - **web_navigate(url)**: Open a URL in the Playwright browser. Use for all web tasks.
-- **web_get_content()**: Extract structured page content (headings, buttons, links, inputs, text). Always prefer this over screenshot+OCR for web pages — gives precise element info that coordinate clicking can't match.
+- **web_get_content()**: Extract structured page content (headings, buttons, links, inputs, text). Always prefer this over screenshot+OCR for web pages.
 - **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
 - **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling.
+- **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Manage browser tabs.
+- **web_refresh / web_back / web_forward**: Page navigation (reload, back, forward).
 - **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 

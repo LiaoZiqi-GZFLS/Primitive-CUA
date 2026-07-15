@@ -26,6 +26,13 @@ from cua.tools.web import (
     WEB_GET_CONTENT_SCHEMA, execute_web_get_content,
     WEB_CLICK_SCHEMA, execute_web_click,
     WEB_TYPE_SCHEMA, execute_web_type,
+    WEB_NEW_TAB_SCHEMA, execute_web_new_tab,
+    WEB_SWITCH_TAB_SCHEMA, execute_web_switch_tab,
+    WEB_CLOSE_TAB_SCHEMA, execute_web_close_tab,
+    WEB_REFRESH_SCHEMA, execute_web_refresh,
+    WEB_BACK_SCHEMA, execute_web_back,
+    WEB_FORWARD_SCHEMA, execute_web_forward,
+    WEB_LIST_TABS_SCHEMA, execute_web_list_tabs,
 )
 from cua.tools.uia import (
     UIA_INSPECT_SCHEMA, execute_uia_inspect,
@@ -62,6 +69,13 @@ TOOLS = [
     WEB_GET_CONTENT_SCHEMA,
     WEB_CLICK_SCHEMA,
     WEB_TYPE_SCHEMA,
+    WEB_NEW_TAB_SCHEMA,
+    WEB_SWITCH_TAB_SCHEMA,
+    WEB_CLOSE_TAB_SCHEMA,
+    WEB_REFRESH_SCHEMA,
+    WEB_BACK_SCHEMA,
+    WEB_FORWARD_SCHEMA,
+    WEB_LIST_TABS_SCHEMA,
     UIA_INSPECT_SCHEMA,
     UIA_CLICK_SCHEMA,
     UIA_SET_VALUE_SCHEMA,
@@ -185,6 +199,27 @@ def execute_tool(
 
     elif name == "web_type":
         return execute_web_type(args["label"], args["text"])
+
+    elif name == "web_new_tab":
+        return execute_web_new_tab()
+
+    elif name == "web_switch_tab":
+        return execute_web_switch_tab(args["index"])
+
+    elif name == "web_close_tab":
+        return execute_web_close_tab()
+
+    elif name == "web_refresh":
+        return execute_web_refresh()
+
+    elif name == "web_back":
+        return execute_web_back()
+
+    elif name == "web_forward":
+        return execute_web_forward()
+
+    elif name == "web_list_tabs":
+        return execute_web_list_tabs()
 
     elif name == "uia_inspect":
         return execute_uia_inspect(args.get("depth", 3))
