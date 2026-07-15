@@ -216,10 +216,36 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
             max_tokens=400,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        return json.loads(resp.choices[0].message.content)
+        content = resp.choices[0].message.content
+        if not content:
+            print(f"  [autoskill] LLM returned empty content, using template fallback")
+            return _template_skill(task, steps, tool_log)
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        print(f"  [autoskill] JSON parse failed: {e}, using template fallback")
+        return _template_skill(task, steps, tool_log)
     except Exception as e:
         print(f"  [autoskill] extraction failed: {e}")
         return None
+
+
+def _template_skill(task: str, steps: list[str], tool_log: list[str]) -> dict:
+    """Fallback: generate a skill from the template when LLM extraction fails."""
+    name = _generate_skill_name(task)
+    # Extract tool names from the trace
+    tools = set()
+    for entry in tool_log[-10:]:
+        if entry.startswith("["):
+            tool_name = entry[1:].split("]")[0]
+            if tool_name:
+                tools.add(tool_name)
+    return {
+        "name": name,
+        "description": task[:100],
+        "steps": steps[-5:] if steps else ["Execute task: " + task[:80]],
+        "tools_used": list(tools)[:5],
+        "prerequisites": "None (template fallback — LLM extraction failed)",
+    }
 
 
 def _write_skill_file(skill: dict):
