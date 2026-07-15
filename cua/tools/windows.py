@@ -81,10 +81,10 @@ def execute_list_windows() -> dict:
             "visible": w.visible,
             "minimized": w.isMinimized,
             "maximized": w.isMaximized,
-            "x": round(w.left / sw, 4),
-            "y": round(w.top / sh, 4),
-            "width": round(w.width / sw, 4),
-            "height": round(w.height / sh, 4),
+            "x": round(max(0, min(1, w.left / sw)), 4),
+            "y": round(max(0, min(1, w.top / sh)), 4),
+            "width": round(max(0, min(1, w.width / sw)), 4),
+            "height": round(max(0, min(1, w.height / sh)), 4),
         })
 
     return {
