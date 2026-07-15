@@ -211,6 +211,26 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
         return None
 
 
+def _repair_json(text: str) -> dict:
+    """Try to salvage malformed JSON by finding the last valid key-value pair."""
+    # Try to close unterminated strings by adding quotes
+    if text.endswith('"') or text.endswith("'"):
+        text += "}"
+    # Find last valid pair
+    last_comma = text.rfind('",')
+    if last_comma > 0:
+        text = text[:last_comma + 2] + '}'
+    # Ensure closing brace
+    if not text.rstrip().endswith("}"):
+        text = text.rstrip() + '}'
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Last resort: return a placeholder
+    return {"reason": "JSON parse failed, raw: " + text[:200], "fix": "check trace"}
+
+
 def _template_skill(task: str, steps: list[str], tool_log: list[str]) -> dict:
     """Fallback: generate a skill from the template when LLM extraction fails."""
     name = _generate_skill_name(task)
@@ -352,18 +372,26 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
             max_tokens=256,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        result = json.loads(resp.choices[0].message.content)
+        content = resp.choices[0].message.content
+        if not content:
+            raise ValueError("empty response")
+
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            # Try to repair truncated JSON
+            result = _repair_json(content)
 
         conn = _get_db()
         conn.execute(
             "INSERT INTO reflections (task, failure_reason, fix_suggestion, tool_trace, tokens) VALUES (?, ?, ?, ?, ?)",
-            (task[:200], result["reason"], result["fix"],
+            (task[:200], result.get("reason", content[:200]), result.get("fix", "see trace"),
              json.dumps(tool_log[-20:], ensure_ascii=False),
              tokens.get("total", 0)),
         )
         conn.commit()
         conn.close()
-        print(f"  [reflection] failure analyzed: {result['reason'][:80]}")
+        print(f"  [reflection] failure analyzed: {result.get('reason', content)[:80]}")
 
     except Exception as e:
         print(f"  [reflection] failed: {e}")
@@ -407,9 +435,15 @@ def settle_pending(client, model: str):
                 max_tokens=200,
                 extra_body={"thinking": {"type": "disabled"}},
             )
-            verdict = json.loads(resp.choices[0].message.content)
+            content = resp.choices[0].message.content
+            if not content:
+                raise ValueError("empty settlement response")
+            try:
+                verdict = json.loads(content)
+            except json.JSONDecodeError:
+                verdict = _repair_json(content)
 
-            if verdict["completed"]:
+            if verdict.get("completed"):
                 report = {"success": True, "summary": verdict["summary"], "steps": []}
                 autoskill_learn(p["task"], report, traces, client, model)
             else:
