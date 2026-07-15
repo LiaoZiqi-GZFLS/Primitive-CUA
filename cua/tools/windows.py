@@ -146,13 +146,23 @@ def execute_focus_window(
 def execute_launch_app(
     name: str, sct, mouse_pos: tuple, screen_w: int, screen_h: int
 ) -> dict:
-    """Launch an app via Start menu search."""
+    """Launch an app via Start menu search. Uses clipboard paste for Chinese names."""
+    import pyperclip
+
     # Win key to open Start
     pyautogui.hotkey("win")
     time.sleep(0.3)
-    # Type app name
-    pyautogui.typewrite(name, interval=0.03)
+
+    # Type or paste the app name
+    if name.isascii():
+        pyautogui.typewrite(name, interval=0.03)
+    else:
+        # Chinese/non-ASCII: use clipboard paste
+        pyperclip.copy(name)
+        time.sleep(0.1)
+        pyautogui.hotkey("ctrl", "v")
     time.sleep(0.5)
+
     # Press Enter to launch
     pyautogui.press("enter")
     time.sleep(1.0)
