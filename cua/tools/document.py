@@ -179,7 +179,12 @@ def execute_delete_document(ref: str) -> dict:
 
 
 def execute_cleanup_documents() -> dict:
-    """Delete all uploaded files."""
+    """Delete all uploaded files.
+
+    Note: Uses client.files.list() which returns up to the default page size.
+    If you have more files than the default page limit, call this multiple times
+    or use ListDocuments to see remaining files.
+    """
     try:
         client = _get_client()
         files = client.files.list()

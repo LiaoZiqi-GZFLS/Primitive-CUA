@@ -101,6 +101,19 @@ def _get_db() -> sqlite3.Connection:
     return conn
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _db():
+    """Context manager for SQLite connections — auto-closes."""
+    conn = _get_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def _init_db():
     conn = _get_db()
     conn.executescript("""
@@ -212,8 +225,8 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
         print(f"  [autoskill] JSON parse failed: {e}, using template fallback")
         return _template_skill(task, steps, tool_log)
     except Exception as e:
-        print(f"  [autoskill] extraction failed: {e}")
-        return None
+        print(f"  [autoskill] extraction failed (transient): {e}, using template")
+        return _template_skill(task, steps, tool_log)
 
 
 def _repair_json(text: str) -> dict:

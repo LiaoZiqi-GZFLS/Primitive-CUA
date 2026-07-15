@@ -1,5 +1,4 @@
 """Human help tool: pause agent and request user assistance."""
-import sys
 
 
 HUMAN_HELP_SCHEMA = {

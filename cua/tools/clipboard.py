@@ -3,7 +3,7 @@ import time
 import pyperclip
 import pyautogui
 
-from cua.tools.mouse import _grab_screen, _denorm
+from cua.tools.mouse import _grab_screen
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 
@@ -67,8 +67,6 @@ def execute_paste_text(
     pyautogui.hotkey("ctrl", "v")
     time.sleep(0.15)
 
-    px = _denorm(mouse_pos[0], screen_w)
-    py = _denorm(mouse_pos[1], screen_h)
     img = _grab_screen(sct)
     scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)

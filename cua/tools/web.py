@@ -470,7 +470,7 @@ def execute_web_press(key: str) -> dict:
 def execute_web_scroll(amount: int) -> dict:
     try:
         page = _get_page()
-        page.evaluate(f"window.scrollBy(0, {amount})")
+        page.evaluate("(a) => window.scrollBy(0, a)", amount)
         return {
             "content": [{"type": "text", "text": f"Scrolled {amount}px {'down' if amount > 0 else 'up'}."}],
             "mouse_pos": None, "last_screenshot": None,

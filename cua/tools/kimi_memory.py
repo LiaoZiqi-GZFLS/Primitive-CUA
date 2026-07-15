@@ -195,12 +195,7 @@ def sync_to_cloud(task: str, skill: dict, reflection: dict | None = None):
                 "value": json.dumps(reflection, ensure_ascii=False),
             })
 
-        # Periodically rethink old reflections (every 10 saves)
-        if int(time.time()) % 10 == 0:
-            client = _get_formula_client()
-            # We don't block on this
-            _call_formula(RETHINK_FORMULA, "rethink", {
-                "content": "Reorganize CUA agent reflections. Group similar failures, identify recurring patterns, suggest improvements.",
-            })
+        # Rethink is best-effort and can be called explicitly by the agent;
+        # removed time-based trigger to avoid race conditions.
     except Exception:
         pass  # Best-effort

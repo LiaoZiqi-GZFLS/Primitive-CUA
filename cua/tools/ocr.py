@@ -15,7 +15,7 @@ OCR_SCHEMA = {
 
 def execute_ocr(last_screenshot: np.ndarray) -> dict:
     """Run RapidOCR on the last screenshot, return structured text results."""
-    from rapidocr_onnxruntime import RapidOCR
+    from cua.tools.screenshot import _get_ocr_engine
 
     # last_screenshot is BGRA from mss, convert to RGB for OCR
     if last_screenshot.shape[-1] == 4:
@@ -23,11 +23,13 @@ def execute_ocr(last_screenshot: np.ndarray) -> dict:
     else:
         img_rgb = last_screenshot
 
-    ocr_engine = RapidOCR()
+    ocr_engine = _get_ocr_engine()
     result, _ = ocr_engine(img_rgb)
 
     if result is None:
         result = []
+
+    h, w = last_screenshot.shape[:2]
 
     text_blocks = []
     for item in result:
@@ -39,8 +41,8 @@ def execute_ocr(last_screenshot: np.ndarray) -> dict:
         text_blocks.append({
             "text": text,
             "confidence": round(conf, 4),
-            "center_x": round((bbox[0][0] + bbox[2][0]) / 2, 1),
-            "center_y": round((bbox[0][1] + bbox[2][1]) / 2, 1),
+            "center_x": round((bbox[0][0] + bbox[2][0]) / 2 / w, 4),
+            "center_y": round((bbox[0][1] + bbox[2][1]) / 2 / h, 4),
         })
 
     return {

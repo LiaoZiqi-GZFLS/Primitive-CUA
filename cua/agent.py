@@ -463,6 +463,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     max_tokens=max_tokens,
                     extra_body={"thinking": {"type": "disabled"}},
                 )
+            except openai.AuthenticationError:
+                raise  # Auth errors are not retryable
             except Exception as e:
                 print(f"  API error (retrying in 2s): {e}")
                 time.sleep(2)
