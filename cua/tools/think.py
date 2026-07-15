@@ -22,9 +22,14 @@ After reflecting, call the appropriate tool to take your next action. Do NOT cal
 
 def execute_think() -> dict:
     """Return a reflection prompt to guide the model's next action."""
+    from cua.tools.utility import get_notes
+    notes = get_notes()
+    prompt = THINK_PROMPT
+    if notes != "(no notes yet)":
+        prompt = f"Your notes so far:\n{notes}\n\n{THINK_PROMPT}"
     return {
         "content": [
-            {"type": "text", "text": THINK_PROMPT}
+            {"type": "text", "text": prompt}
         ],
         "mouse_pos": None,
         "last_screenshot": None,

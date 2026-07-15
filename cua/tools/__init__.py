@@ -33,6 +33,12 @@ from cua.tools.uia import (
     UIA_SET_VALUE_SCHEMA, execute_uia_set_value,
     UIA_GET_TEXT_SCHEMA, execute_uia_get_text,
 )
+from cua.tools.utility import (
+    WAIT_SCHEMA, execute_wait,
+    FILE_READ_SCHEMA, execute_file_read,
+    FILE_WRITE_SCHEMA, execute_file_write,
+    NOTE_SCHEMA, execute_note,
+)
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
@@ -60,6 +66,10 @@ TOOLS = [
     UIA_CLICK_SCHEMA,
     UIA_SET_VALUE_SCHEMA,
     UIA_GET_TEXT_SCHEMA,
+    WAIT_SCHEMA,
+    FILE_READ_SCHEMA,
+    FILE_WRITE_SCHEMA,
+    NOTE_SCHEMA,
     HUMAN_HELP_SCHEMA,
     FINISH_SCHEMA,
 ]
@@ -187,6 +197,18 @@ def execute_tool(
 
     elif name == "uia_get_text":
         return execute_uia_get_text(args["name"])
+
+    elif name == "wait":
+        return execute_wait(args["seconds"])
+
+    elif name == "file_read":
+        return execute_file_read(args["path"])
+
+    elif name == "file_write":
+        return execute_file_write(args["path"], args["content"])
+
+    elif name == "note":
+        return execute_note(args.get("text", ""))
 
     elif name == "request_human_help":
         return execute_human_help(args["request"])
