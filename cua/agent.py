@@ -394,6 +394,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
     active_tools = [t for t in ALL_TOOLS if t["function"]["name"] in tool_names]
     print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
 
+    # Inject similar past learnings into first think()
+    from cua.tools.think import set_think_context
+    set_think_context(task_class.get("similar", ""))
+
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0  # how many action-rounds have been compressed so far
 

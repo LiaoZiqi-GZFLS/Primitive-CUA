@@ -1,5 +1,15 @@
 """Think tool: prompts the agent to pause, reflect, and plan."""
 
+# Set by agent.py at task start with similar past learnings from ChromaDB
+_first_think_extra = ""
+
+
+def set_think_context(similar_text: str):
+    """Set extra context for the next think() call (called once at task start)."""
+    global _first_think_extra
+    _first_think_extra = similar_text
+
+
 THINK_SCHEMA = {
     "type": "function",
     "function": {
@@ -23,10 +33,19 @@ After reflecting, call the appropriate tool to take your next action. Do NOT cal
 def execute_think() -> dict:
     """Return a reflection prompt to guide the model's next action."""
     from cua.tools.utility import get_notes
+
+    global _first_think_extra
+    extra = _first_think_extra
+    _first_think_extra = ""  # only inject once
+
     notes = get_notes()
-    prompt = THINK_PROMPT
+    prompt = ""
+    if extra:
+        prompt += f"Relevant past experience for this task:\n{extra}\n\n"
     if notes != "(no notes yet)":
-        prompt = f"Your notes so far:\n{notes}\n\n{THINK_PROMPT}"
+        prompt += f"Your notes so far:\n{notes}\n\n"
+    prompt += THINK_PROMPT
+
     return {
         "content": [
             {"type": "text", "text": prompt}

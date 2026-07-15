@@ -54,7 +54,7 @@ Categories:
 - document: reading/extracting PDF/DOCX files, OCR, managing uploaded documents
 - windows: desktop window management (always loaded)
 
-Return JSON with: needs_web (bool), needs_uia (bool), needs_content (bool), needs_document (bool), reasoning (string, brief)."""
+Return JSON with: needs_web (bool), needs_uia (bool), needs_content (bool), needs_document (bool), reasoning (string, brief), summary (string, a 1-2 sentence task summary in Chinese for similarity search)."""
 
 
 def _classify_llm(task: str, client, model: str) -> dict:
@@ -79,6 +79,7 @@ def _classify_llm(task: str, client, model: str) -> dict:
             "needs_document": result.get("needs_document", False),
             "needs_windows": True,
             "reasoning": result.get("reasoning", ""),
+            "summary": result.get("summary", task[:80]),
         }
     except Exception as e:
         print(f"  [loader] LLM classification failed ({e}), falling back to keyword match")
@@ -130,7 +131,32 @@ def _classify_keywords(task: str) -> dict:
         "needs_document": any(kw in task_lower for kw in DOCUMENT_KEYWORDS),
         "needs_windows": True,
         "reasoning": "keyword match",
+        "summary": task[:80],
     }
+
+
+def _search_similar(task_summary: str, top_n: int = 5) -> str:
+    """Search ChromaDB for similar past skills/learnings. Returns formatted prompt snippet."""
+    try:
+        from cua.learning import _get_skills_collection
+        col = _get_skills_collection()
+        results = col.query(query_texts=[task_summary], n_results=top_n)
+        if not results["ids"] or not results["ids"][0]:
+            return ""
+
+        lines = []
+        for i, (sid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
+            sim = 1.0 - dist  # cosine distance → similarity
+            if sim < 0.4:  # skip low-relevance results
+                continue
+            doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
+            lines.append(f"- [{sim:.0%}] {doc[:150]}")
+
+        if lines:
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
 
 
 # --- Main API ---
@@ -143,6 +169,10 @@ def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
 
     if c is None:
         c = _classify_keywords(task)
+
+    # Search ChromaDB for similar past learnings
+    task_summary = c.get("summary", task[:80])
+    similar = _search_similar(task_summary)
 
     tool_names = list(BASE_TOOLS)
     tool_names.extend(WINDOWS_TOOLS)
@@ -167,4 +197,5 @@ def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
         info_parts.append(f"Document({len(DOCUMENT_TOOLS)})")
 
     info = " + ".join(info_parts) + f" [{c.get('reasoning', '')}]"
+    c["similar"] = similar
     return tool_names, info, c
