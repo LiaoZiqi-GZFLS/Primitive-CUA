@@ -29,6 +29,7 @@ WINDOWS_TOOLS = [
 ]
 
 CONTENT_TOOLS = [
+    "memory", "rethink",        # Kimi remote memory + consolidation
     "DraftContent",             # content writing subagent
     "GenerateImage",            # SVG image generation subagent
 ]

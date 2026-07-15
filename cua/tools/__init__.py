@@ -58,6 +58,10 @@ from cua.tools.document import (
     DELETE_DOCUMENT_SCHEMA, execute_delete_document,
     CLEANUP_DOCUMENTS_SCHEMA, execute_cleanup_documents,
 )
+from cua.tools.kimi_memory import (
+    MEMORY_SCHEMA, execute_memory,
+    RETHINK_SCHEMA, execute_rethink,
+)
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -98,6 +102,8 @@ TOOLS = [
     FILE_READ_SCHEMA,
     FILE_WRITE_SCHEMA,
     NOTE_SCHEMA,
+    MEMORY_SCHEMA,
+    RETHINK_SCHEMA,
     DRAFT_CONTENT_SCHEMA,
     GENERATE_IMAGE_SCHEMA,
     READ_DOCUMENT_SCHEMA,
@@ -300,6 +306,16 @@ def execute_tool(
 
     elif name == "CleanupDocuments":
         return execute_cleanup_documents()
+
+    elif name == "memory":
+        return execute_memory(
+            args.get("action", ""),
+            args.get("key", ""),
+            args.get("value", ""),
+        )
+
+    elif name == "rethink":
+        return execute_rethink(args.get("content", ""))
 
     elif name == "finish":
         return execute_finish(

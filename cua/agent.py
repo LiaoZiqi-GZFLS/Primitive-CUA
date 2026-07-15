@@ -78,6 +78,8 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Manage browser tabs.
 - **web_refresh / web_back / web_forward**: Page navigation (reload, back, forward).
 - **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
+- **memory(action, key, value?)**: Save to or recall from Kimi's remote persistent memory. Use action='save' to store skills and findings, action='recall' to retrieve. Memory persists across all sessions.
+- **rethink(content)**: Use Kimi's AI to reorganize and consolidate ideas. Pass accumulated notes or reflections for intelligent summarization.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
 ## Critical Rules

@@ -341,6 +341,13 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         conn.close()
         print(f"  [autoskill] skill '{name}' saved ({'updated' if existing else 'new'})")
 
+        # Sync to Kimi remote memory (best-effort)
+        try:
+            from cua.tools.kimi_memory import sync_to_cloud
+            sync_to_cloud(task, skill)
+        except Exception:
+            pass
+
     except Exception as e:
         print(f"  [autoskill] failed: {e}")
 
