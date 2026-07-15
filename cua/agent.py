@@ -37,6 +37,13 @@ VERIFY_TOOLS = {
     "uia_click", "uia_set_value",
 }
 
+# Perception tools — sync physical cursor before executing
+PERCEPTION_TOOLS = {
+    "screenshot", "magnifier", "ocr",
+    "list_windows", "web_get_content", "web_list_tabs",
+    "read_clipboard", "uia_inspect", "uia_get_text",
+}
+
 
 SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools. You operate in a tool-calling loop: you see screenshots, call tools to act, receive new screenshots, and continue until the task is done.
 
@@ -225,12 +232,6 @@ def _cleanup_context(messages: list):
                 first_think_idx = i  # the earliest think (round 0) gets the smallest i
 
     # Rule 4: trim stale text from ALL perception tools.
-    # Keep only the most recent result per perception tool; wipe all older ones.
-    PERCEPTION_TOOLS = {
-        "web_get_content", "list_windows", "web_list_tabs",
-        "ocr", "read_clipboard", "uia_inspect", "uia_get_text",
-    }
-
     trimmed = 0
 
     for i in range(len(messages)):
@@ -546,6 +547,13 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 # Save before-screenshot for verify step
                 img_before = img.copy() if name in VERIFY_TOOLS else None
+
+                # Before perception tools, sync physical cursor to virtual position
+                if name in PERCEPTION_TOOLS:
+                    import pyautogui
+                    px = round(mouse_pos[0] * screen_w)
+                    py = round(mouse_pos[1] * screen_h)
+                    pyautogui.moveTo(px, py)
 
                 try:
                     result = execute_tool(
