@@ -257,31 +257,36 @@ def _cleanup_context(messages: list):
     return action_count
 
 
-def _compress_context(messages: list, client, model: str, max_tokens: int):
-    """LLM compression: summarize the earliest rounds into one concise record."""
-    # Find the 10th state-changing action position
+def _compress_context(messages: list, client, model: str, max_tokens: int, skip_actions: int = 0):
+    """LLM compression: summarize the next 10 oldest action-rounds into one concise record."""
+    # Find the range of actions to compress: skip_actions to skip_actions+10
     action_count = 0
-    tenth_action_idx = -1
+    compress_start_idx = -1
+    compress_end_idx = -1
     for i in range(len(messages)):
         msg = messages[i]
         if msg["role"] == "assistant" and "tool_calls" in msg:
             for tc in msg["tool_calls"]:
                 if tc.get("function", {}).get("name") in VERIFY_TOOLS:
                     action_count += 1
-                    if action_count == 10:
-                        tenth_action_idx = i
+                    if action_count == skip_actions + 1 and compress_start_idx < 0:
+                        compress_start_idx = i
+                    if action_count == skip_actions + 10:
+                        compress_end_idx = i
                         break
-        if tenth_action_idx >= 0:
+        if compress_end_idx >= 0:
             break
 
-    if tenth_action_idx < 0:
-        return  # Not enough actions yet
+    if compress_start_idx < 0 or compress_end_idx < 0:
+        return  # Not enough actions in range
 
-    # Collect messages to compress: everything from start up to the 10th action
+    # Collect messages to compress: from compress_start_idx to compress_end_idx
     to_compress = []
     keep = []
     for i, msg in enumerate(messages):
-        if i <= tenth_action_idx:
+        if i < compress_start_idx:
+            keep.append(msg)
+        elif i <= compress_end_idx:
             # Skip system prompt and the first think result
             if i == 0:  # system prompt
                 keep.append(msg)
@@ -390,7 +395,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
     print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
-    _context_compressed = False
+    _compressed_up_to = 0  # how many action-rounds have been compressed so far
 
     from cua.tools.utility import clear_notes
     clear_notes()
@@ -784,10 +789,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 # Context cleanup after state-changing actions
                 if name in VERIFY_TOOLS:
                     ac = _cleanup_context(messages)
-                    # After 20+ actions, compress early rounds via LLM (once)
-                    if ac >= 20 and not _context_compressed:
-                        _compress_context(messages, client, model, max_tokens)
-                        _context_compressed = True
+                    # Every 10 actions beyond 20, compress the oldest 10
+                    while ac >= _compressed_up_to + 20:
+                        _compress_context(messages, client, model, max_tokens, _compressed_up_to)
+                        _compressed_up_to += 10
 
         return {
             "success": False,
