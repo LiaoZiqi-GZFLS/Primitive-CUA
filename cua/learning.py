@@ -19,6 +19,56 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "memory.db"
 SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
 
+# ChromaDB for skill similarity search (lazy init)
+_chroma_client = None
+_skills_collection = None
+_SIMILARITY_THRESHOLD = 0.85
+
+
+def _get_skills_collection():
+    """Get or create ChromaDB skills collection."""
+    global _chroma_client, _skills_collection
+    if _skills_collection is None:
+        import chromadb
+        from chromadb.utils import embedding_functions
+        _ensure_dirs()
+        _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
+        ef = embedding_functions.DefaultEmbeddingFunction()
+        _skills_collection = _chroma_client.get_or_create_collection(
+            name="cua_skills",
+            embedding_function=ef,
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _skills_collection
+
+
+def _find_similar_skill(description: str) -> tuple[str | None, float]:
+    """Search for existing skills similar to this description. Returns (skill_name, similarity)."""
+    try:
+        col = _get_skills_collection()
+        results = col.query(query_texts=[description], n_results=1)
+        if results["ids"] and results["ids"][0] and results["distances"] and results["distances"][0]:
+            distance = results["distances"][0][0]
+            similarity = 1.0 - distance  # cosine distance → similarity
+            if similarity >= _SIMILARITY_THRESHOLD:
+                return results["ids"][0][0], similarity
+    except Exception:
+        pass
+    return None, 0
+
+
+def _index_skill(name: str, description: str):
+    """Add a skill to the ChromaDB vector index."""
+    try:
+        col = _get_skills_collection()
+        # Remove old entry if exists
+        existing = col.get(ids=[name])
+        if existing["ids"]:
+            col.delete(ids=[name])
+        col.add(ids=[name], documents=[description])
+    except Exception:
+        pass  # Best-effort
+
 
 def _get_learning_config() -> dict:
     """Get learning config with defaults."""
@@ -221,7 +271,18 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
             return
 
         name = skill.get("name", _generate_skill_name(task))
+        desc = skill.get("description", "")
+
+        # Check ChromaDB for similar existing skill
+        similar_name, similarity = _find_similar_skill(desc)
+        if similar_name and similarity >= _SIMILARITY_THRESHOLD:
+            name = similar_name  # Merge into existing skill
+            print(f"  [autoskill] merged into '{name}' (similarity={similarity:.2f})")
+
         file_path = _write_skill_file(skill)
+
+        # Index in ChromaDB
+        _index_skill(name, desc)
 
         conn = _get_db()
         existing = conn.execute(
@@ -229,7 +290,6 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         ).fetchone()
 
         if existing:
-            # Bump version and count
             parts = existing["version"].split(".")
             parts[-1] = str(int(parts[-1]) + 1)
             new_version = ".".join(parts)
@@ -240,7 +300,7 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         else:
             conn.execute(
                 "INSERT INTO skills_index (name, description, file_path, version) VALUES (?, ?, ?, '1.0.0')",
-                (name, skill.get("description", ""), str(file_path)),
+                (name, desc, str(file_path)),
             )
 
         conn.commit()
