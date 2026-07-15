@@ -709,14 +709,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 # Verify + Think: after a state-modifying action, show before/after and reflect.
                 if name in VERIFY_TOOLS:
                     do_verify = args.get("verify", True)
-                    if not do_verify:
-                        # Skip verify but still inject think
-                        print(f"  [verify] skipped (verify=false), injecting think...")
-                        from cua.tools.think import THINK_PROMPT
-                        messages.append({"role": "user", "content": [{"type": "text", "text": THINK_PROMPT}]})
-                    else:
-                        print(f"  [verify] waiting 1s, taking after-screenshot...")
-                        time.sleep(1.0)
+
+                if name in VERIFY_TOOLS and do_verify:
+                    print(f"  [verify] waiting 1s, taking after-screenshot...")
+                    time.sleep(1.0)
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 
