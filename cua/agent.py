@@ -724,8 +724,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     after_rgb = img_after[..., [2, 1, 0]]
 
                     # OCR both screenshots
-                    from rapidocr_onnxruntime import RapidOCR
-                    ocr = RapidOCR()
+                    from cua.tools.screenshot import _get_ocr_engine
+                    ocr = _get_ocr_engine()
                     before_result, _ = ocr(before_rgb)
                     after_result, _ = ocr(after_rgb)
 

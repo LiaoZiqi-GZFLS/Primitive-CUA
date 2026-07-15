@@ -26,17 +26,33 @@ def _annotated_screenshot(
     return draw_cursor(original, px, py, scale)
 
 
+def _get_ocr_engine():
+    """Get or create a shared RapidOCR engine with GPU preference."""
+    from rapidocr_onnxruntime import RapidOCR
+    try:
+        import onnxruntime as ort
+        if 'DmlExecutionProvider' in ort.get_available_providers():
+            return RapidOCR(providers=['DmlExecutionProvider', 'CPUExecutionProvider'])
+    except Exception:
+        pass
+    return RapidOCR()
+
+
+_ocr_engine = None
+
+
 def _run_ocr(img: np.ndarray, screen_w: int, screen_h: int) -> str:
     """Run RapidOCR on the screenshot, return text blocks with normalized coordinates."""
-    from rapidocr_onnxruntime import RapidOCR
+    global _ocr_engine
+    if _ocr_engine is None:
+        _ocr_engine = _get_ocr_engine()
 
     if img.shape[-1] == 4:
-        img_rgb = img[..., [2, 1, 0]]  # BGRA → RGB
+        img_rgb = img[..., [2, 1, 0]]
     else:
         img_rgb = img
 
-    engine = RapidOCR()
-    result, _ = engine(img_rgb)
+    result, _ = _ocr_engine(img_rgb)
 
     if not result:
         return "[no text detected]"
