@@ -38,11 +38,11 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **read_clipboard**: Read text content from the system clipboard. Use to check what was copied.
 - **paste_text(text)**: Paste text via clipboard + Ctrl+V. REQUIRED for Chinese, Japanese, emoji, or any non-ASCII text — type_keys cannot type these. Also use for long text. First paste may trigger IME, try twice if needed.
 - **think**: Pause to reflect on progress and plan next steps. Use when you're stuck, unsure, or need to strategize. Does NOT perform any action — it gives you space to think before your next move.
-- **list_windows**: List all open windows with titles, positions, and visibility. Use to find running apps before clicking around.
+- **list_windows**: List all open windows with titles, positions, visibility. Use this FIRST for any desktop task — find the target window before acting. Essential for Office, dialogs, and native apps.
 - **focus_window(title)**: Bring a window to front by matching its title (partial match). Use list_windows first to find the exact title.
 - **launch_app(name)**: Launch via Start menu search (Win key → type/paste name → Enter). Uses paste for Chinese. Only finds apps indexed by Windows Search — if it fails, try opening via taskbar shortcut or desktop icon instead.
 - **web_navigate(url)**: Open a URL in the Playwright browser. Use for all web tasks.
-- **web_get_content()**: Extract page title, headings, buttons, links, inputs, text. Use instead of screenshot+OCR for web pages.
+- **web_get_content()**: Extract structured page content (headings, buttons, links, inputs, text). Always prefer this over screenshot+OCR for web pages — gives precise element info that coordinate clicking can't match.
 - **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
 - **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling.
 - **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
@@ -58,7 +58,9 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 
 4. **Coordinates**: (0,0)=top-left, (1,1)=bottom-right. Use exactly 4 decimal places. The annotated screenshot shows WHERE the cursor currently is with a red crosshair. To click something: FIRST set_mouse() to position the cursor, THEN click().
 
-5. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
+5. **Prefer structured tools over coordinate clicking**: For Office apps (Word, Excel, PowerPoint), Windows native dialogs, and web pages, use list_windows + focus_window first. For web tasks, use web_navigate → web_get_content → web_click/web_type instead of screenshot-based coordinate clicking — it's faster, more reliable, and costs fewer tokens. Only fall back to set_mouse+click when structured tools can't target the element.
+
+6. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
 
 
 def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
