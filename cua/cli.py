@@ -1,8 +1,17 @@
 """CLI entry point for the CUA agent."""
+import atexit
 import os
 import sys
 
 from openai import OpenAI
+
+# Suppress noisy threading shutdown errors from Playwright/ChromaDB
+def _cleanup():
+    import threading
+    for t in threading.enumerate():
+        if t.is_alive() and t != threading.current_thread():
+            t.join(timeout=0.5)
+atexit.register(_cleanup)
 
 from cua.config import load_config
 from cua.agent import run_task
