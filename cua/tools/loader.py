@@ -10,6 +10,7 @@ BASE_TOOLS = [
     "file_read", "file_write",
     "finish", "request_human_help",
     "DraftContent", "GenerateImage",
+    "ReadDocument", "ListDocuments", "DeleteDocument", "CleanupDocuments",
     "$web_search",
 ]
 

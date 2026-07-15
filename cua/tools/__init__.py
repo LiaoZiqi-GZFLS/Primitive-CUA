@@ -51,6 +51,12 @@ from cua.tools.utility import (
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.subagents.draft_content import DRAFT_CONTENT_SCHEMA, execute_draft_content
 from cua.subagents.image_gen import GENERATE_IMAGE_SCHEMA, execute_generate_image
+from cua.tools.document import (
+    READ_DOCUMENT_SCHEMA, execute_read_document,
+    LIST_DOCUMENTS_SCHEMA, execute_list_documents,
+    DELETE_DOCUMENT_SCHEMA, execute_delete_document,
+    CLEANUP_DOCUMENTS_SCHEMA, execute_cleanup_documents,
+)
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -92,6 +98,10 @@ TOOLS = [
     NOTE_SCHEMA,
     DRAFT_CONTENT_SCHEMA,
     GENERATE_IMAGE_SCHEMA,
+    READ_DOCUMENT_SCHEMA,
+    LIST_DOCUMENTS_SCHEMA,
+    DELETE_DOCUMENT_SCHEMA,
+    CLEANUP_DOCUMENTS_SCHEMA,
     HUMAN_HELP_SCHEMA,
     FINISH_SCHEMA,
 ]
@@ -272,6 +282,18 @@ def execute_tool(
 
     elif name == "GenerateImage":
         return execute_generate_image(args["requirement"])
+
+    elif name == "ReadDocument":
+        return execute_read_document(args["path"], args.get("purpose", "file-extract"))
+
+    elif name == "ListDocuments":
+        return execute_list_documents()
+
+    elif name == "DeleteDocument":
+        return execute_delete_document(args["ref"])
+
+    elif name == "CleanupDocuments":
+        return execute_cleanup_documents()
 
     elif name == "finish":
         return execute_finish(
