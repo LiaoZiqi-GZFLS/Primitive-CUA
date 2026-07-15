@@ -46,19 +46,9 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 5. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
 
 
-def _build_initial_content(task: str, mouse_pos, screen_w, screen_h, img):
-    """Build the content blocks for the first user message."""
-    px = round(mouse_pos[0] * screen_w)
-    py = round(mouse_pos[1] * screen_h)
-    annotated = draw_cursor(img, px, py, scale=1.0)
-
-    # BGRA → RGB for JPEG
-    img_rgb = img[..., [2, 1, 0]]
-    annotated_rgb = annotated[..., [2, 1, 0]]
-
+def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
+    """Build the text-only content blocks for the first user message."""
     return [
-        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(img_rgb)}},
-        {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(annotated_rgb)}},
         {
             "type": "text",
             "text": (
@@ -68,11 +58,11 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h, img):
                 f"Before you begin:\n"
                 f"1. If this is a purely informational task that requires no desktop action "
                 f"(e.g. answering a question, looking something up), call finish() directly.\n"
-                f"2. Otherwise, first use think() to plan your approach: "
-                f"analyze the screenshots, assess the current state, "
-                f"and outline the steps needed.\n"
+                f"2. Otherwise, first call screenshot() to see the current desktop state. "
+                f"Then use think() to plan your approach: analyze what you see, "
+                f"assess the current state, and outline the steps needed.\n"
                 f"3. Before each action, confirm the current state matches your expectation "
-                f"by checking the screenshot. Then explain your reasoning and act."
+                f"by checking the screenshot. Explain your reasoning and act."
             ),
         },
     ]
@@ -114,14 +104,15 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Virtual mouse starts at center
         mouse_pos = (0.5, 0.5)
 
-        # Initial screenshot
+        # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
 
+        # First message: text only, no screenshots — let agent plan before looking
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": _build_initial_content(task, mouse_pos, screen_w, screen_h, img),
+                "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
             },
         ]
 
