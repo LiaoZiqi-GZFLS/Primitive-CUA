@@ -33,7 +33,9 @@ def _get_skills_collection():
         from chromadb.utils import embedding_functions
         _ensure_dirs()
         _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
-        ef = embedding_functions.DefaultEmbeddingFunction()
+        ef = embedding_functions.ONNXMiniLM_L6_V2(
+            preferred_providers=["CPUExecutionProvider"]
+        )
         _skills_collection = _chroma_client.get_or_create_collection(
             name="cua_skills",
             embedding_function=ef,

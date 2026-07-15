@@ -34,14 +34,9 @@ def _get_ocr_engine():
     global _ocr_engine
     if _ocr_engine is not None:
         return _ocr_engine
+    # Patch RapidOCR to support DML before creating the engine
+    from cua.ocr_patch import _patched_init  # noqa: F401
     from rapidocr_onnxruntime import RapidOCR
-    try:
-        import onnxruntime as ort
-        if 'DmlExecutionProvider' in ort.get_available_providers():
-            _ocr_engine = RapidOCR(providers=['DmlExecutionProvider', 'CPUExecutionProvider'])
-            return _ocr_engine
-    except Exception:
-        pass
     _ocr_engine = RapidOCR()
     return _ocr_engine
 
