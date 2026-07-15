@@ -34,4 +34,4 @@ learning:
   learnings_max_prompt: 10    # Past learnings to include in system prompt
   pending_enabled: true       # Save interrupted tasks for later settlement
   pending_max_retries: 3      # Max LLM settlement attempts per task
-  cleanup_days: 30            # Auto-delete learnings older than this
+  cleanup_days: 0             # Auto-delete old learnings (0=never, days if >0)

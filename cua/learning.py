@@ -91,12 +91,13 @@ def _init_db():
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
-    # Cleanup expired entries
-    cleanup_days = _cfg("cleanup_days", 30)
-    cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
-    conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
-    conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
-    conn.execute("DELETE FROM pending_learning WHERE settled=1 AND created_at < ?", (cutoff,))
+    # Cleanup expired entries (only if cleanup_days > 0)
+    cleanup_days = _cfg("cleanup_days", 0)
+    if cleanup_days > 0:
+        cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
+        conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
+        conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
+        conn.execute("DELETE FROM pending_learning WHERE settled=1 AND created_at < ?", (cutoff,))
 
     # Prune skills if over max
     max_skills = _cfg("autoskill_max_skills", 50)

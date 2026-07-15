@@ -31,7 +31,7 @@ DEFAULTS = {
         "learnings_max_prompt": 10,         # Past learnings to inject in prompt
         "pending_enabled": True,            # Save interrupted task traces
         "pending_max_retries": 3,           # Settlement retries before force-write
-        "cleanup_days": 30,                 # Auto-delete learnings older than N days
+        "cleanup_days": 0,                  # Auto-delete learnings older than N days (0=never)
     },
 }
 
