@@ -60,7 +60,7 @@ LAUNCH_APP_SCHEMA = {
 
 
 def execute_list_windows() -> dict:
-    """List all open windows with metadata."""
+    """List all open windows with metadata (normalized coordinates)."""
     try:
         windows = gw.getAllWindows()
     except Exception as e:
@@ -70,23 +70,21 @@ def execute_list_windows() -> dict:
             "last_screenshot": None,
         }
 
+    sw, sh = pyautogui.size()
     result = []
     for w in windows:
         title = w.title.strip()
         if not title:
             continue
-        # Normalize coordinates to screen center
-        cx = (w.left + w.right) / 2
-        cy = (w.top + w.bottom) / 2
         result.append({
             "title": title,
             "visible": w.visible,
             "minimized": w.isMinimized,
             "maximized": w.isMaximized,
-            "width": w.width,
-            "height": w.height,
-            "x": w.left,
-            "y": w.top,
+            "x": round(w.left / sw, 4),
+            "y": round(w.top / sh, 4),
+            "width": round(w.width / sw, 4),
+            "height": round(w.height / sh, 4),
         })
 
     return {
