@@ -183,6 +183,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
             }
             messages.append(assistant_msg)
 
+            # Show model's reasoning before tool calls
+            if msg.content:
+                print(f"  💭 {msg.content}")
+
             for tc in msg.tool_calls:
                 name = tc.function.name
                 try:
