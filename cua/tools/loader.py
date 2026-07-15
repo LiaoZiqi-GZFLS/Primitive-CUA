@@ -54,7 +54,7 @@ Categories:
 - document: reading/extracting PDF/DOCX files, OCR, managing uploaded documents
 - windows: desktop window management (always loaded)
 
-Return JSON with: needs_web (bool), needs_uia (bool), needs_content (bool), needs_document (bool), reasoning (string, brief), summary (string, a 1-2 sentence task summary in Chinese for similarity search)."""
+Return JSON with: needs_web (bool), needs_uia (bool), needs_content (bool), needs_document (bool), reasoning (string, brief), summary (string, a 1-sentence task summary in ENGLISH for vector search against stored skills)."""
 
 
 def _classify_llm(task: str, client, model: str) -> dict:
@@ -131,7 +131,7 @@ def _classify_keywords(task: str) -> dict:
         "needs_document": any(kw in task_lower for kw in DOCUMENT_KEYWORDS),
         "needs_windows": True,
         "reasoning": "keyword match",
-        "summary": task[:80],
+        "summary": task[:80],  # keyword fallback uses raw task
     }
 
 
@@ -147,7 +147,7 @@ def _search_similar(task_summary: str, top_n: int = 5) -> str:
         lines = []
         for i, (sid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
             sim = 1.0 - dist  # cosine distance → similarity
-            if sim < 0.1:  # skip noise (cross-lingual scores are low with MiniLM)
+            if sim < 0.3:  # skip noise
                 continue
             doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
             lines.append(f"- [{sim:.0%}] {doc[:150]}")
