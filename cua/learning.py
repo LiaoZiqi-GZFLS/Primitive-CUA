@@ -287,16 +287,19 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         return
 
     if not _cfg("autoskill_enabled", True):
+        print(f"  [autoskill] disabled in config (autoskill_enabled=false)")
         return
 
     min_steps = _cfg("autoskill_min_steps", 3)
     if len(tool_log) < min_steps:
+        print(f"  [autoskill] skipped: only {len(tool_log)} tool calls (need {min_steps})")
         return
 
     try:
         steps = report.get("steps", [])
         skill = _extract_skill_from_trace(task, steps, tool_log, client, model)
         if not skill:
+            print(f"  [autoskill] extraction returned no skill")
             return
 
         name = skill.get("name", _generate_skill_name(task))
