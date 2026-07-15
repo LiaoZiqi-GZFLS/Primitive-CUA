@@ -425,9 +425,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 raw_ocr = item.get("text", "")
                                 break
 
-                        # Scan for latest list_windows / web_get_content results
+                        # Scan for latest awareness tool results
                         latest_windows = "(no list_windows result yet)"
                         latest_web = "(no web_get_content result yet)"
+                        latest_tabs = "(no web_list_tabs result yet)"
                         for m in reversed(messages):
                             if m["role"] == "tool":
                                 n = m.get("name", "")
@@ -435,6 +436,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                     latest_windows = m.get("content", "")
                                 elif n == "web_get_content" and latest_web.startswith("(no"):
                                     latest_web = m.get("content", "")
+                                elif n == "web_list_tabs" and latest_tabs.startswith("(no"):
+                                    latest_tabs = m.get("content", "")
 
                         # Build UIA tree with content
                         uia_tree = "(UIA inspection not available)"
@@ -499,6 +502,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                     f"{raw_ocr}\n\n"
                                     f"Latest list_windows result:\n{latest_windows}\n\n"
                                     f"Latest web_get_content result:\n{latest_web}\n\n"
+                                    f"Latest web_list_tabs result:\n{latest_tabs}\n\n"
                                     f"UIA control tree of foreground window (with content):\n"
                                     f"{uia_tree}\n\n"
                                     f"Based on all the above, summarize what's useful for the next step.\n"
