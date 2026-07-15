@@ -20,6 +20,8 @@ VERIFY_TOOLS = {
     "focus_window", "launch_app",
     # Web tools
     "web_navigate", "web_click", "web_type",
+    # UIA tools that modify state
+    "uia_click", "uia_set_value",
 }
 
 
