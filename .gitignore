@@ -1,6 +1,9 @@
 # CUA config (contains API key)
 cua/config.yaml
 
+# CUA runtime data (SQLite, ChromaDB, cache)
+cua/data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

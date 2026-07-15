@@ -51,7 +51,9 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **wait(seconds)**: Wait for a duration (0.5-10s). Use after launching apps or loading pages instead of repeatedly calling screenshot to check. Saves tokens.
 - **file_read(path)**: Read the contents of a text file. Use to check file content without opening GUI apps.
 - **file_write(path, content)**: Write text content to a file. Creates parent directories automatically. Use for saving output directly instead of GUI save dialogs.
-- **note(text)**: Save a note to your persistent notepad. Use to remember window positions, icon locations, file paths, or task progress. Notes appear automatically in think(). Call with no text to read all notes.
+- **note(text)**: Save a note to your persistent notepad.
+- **DraftContent(task, persona, prefill?, max_chars?)**: Write long-form content (articles, emails, reports) in an isolated writing session with its own persona. Returns file path + preview — use file_read to get full content.
+- **GenerateImage(requirement)**: Generate an SVG image (icon, illustration, diagram). Uses multi-round generation + visual self-review. Returns PNG file path. Use to remember window positions, icon locations, file paths, or task progress. Notes appear automatically in think(). Call with no text to read all notes.
 - **uia_inspect(depth)**: Inspect the UI control tree of the current foreground window. Shows control names, types, and positions. Essential for Office, native Windows apps, and dialogs with structured UI.
 - **uia_click(name)**: Click a UI control by name (partial match) in the foreground window. Uses UIA Invoke pattern — reliable for buttons, menus, tabs in native apps.
 - **uia_set_value(name, value)**: Set the value of an input/editable control by name. Uses UIA Value pattern for precise text entry in Office and native app fields. Supports Chinese.

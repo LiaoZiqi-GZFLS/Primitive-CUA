@@ -49,6 +49,8 @@ from cua.tools.utility import (
     NOTE_SCHEMA, execute_note,
 )
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
+from cua.subagents.draft_content import DRAFT_CONTENT_SCHEMA, execute_draft_content
+from cua.subagents.image_gen import GENERATE_IMAGE_SCHEMA, execute_generate_image
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -88,6 +90,8 @@ TOOLS = [
     FILE_READ_SCHEMA,
     FILE_WRITE_SCHEMA,
     NOTE_SCHEMA,
+    DRAFT_CONTENT_SCHEMA,
+    GENERATE_IMAGE_SCHEMA,
     HUMAN_HELP_SCHEMA,
     FINISH_SCHEMA,
 ]
@@ -257,6 +261,17 @@ def execute_tool(
 
     elif name == "request_human_help":
         return execute_human_help(args["request"])
+
+    elif name == "DraftContent":
+        return execute_draft_content(
+            args["task"],
+            args["persona"],
+            args.get("prefill", ""),
+            args.get("max_chars", 4000),
+        )
+
+    elif name == "GenerateImage":
+        return execute_generate_image(args["requirement"])
 
     elif name == "finish":
         return execute_finish(

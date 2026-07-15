@@ -9,6 +9,7 @@ BASE_TOOLS = [
     "think", "note", "wait",
     "file_read", "file_write",
     "finish", "request_human_help",
+    "DraftContent", "GenerateImage",
     "$web_search",
 ]
 
