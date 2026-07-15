@@ -163,7 +163,8 @@ def execute_tool(
 
     elif name == "type_keys":
         return execute_type_keys(
-            args["keys"], sct, mouse_pos, screen_w, screen_h
+            args["keys"], sct, mouse_pos, screen_w, screen_h,
+            repeat=args.get("repeat", 1),
         )
 
     elif name == "magnifier":

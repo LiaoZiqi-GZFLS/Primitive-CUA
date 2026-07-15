@@ -48,7 +48,11 @@ TYPE_KEYS_SCHEMA = {
                         "delete, space, up, down, left, right, home, end, pageup, pagedown, "
                         "f1-f12, capslock, numlock, printscreen, volumeup, volumedown."
                     ),
-                }
+                },
+                "repeat": {
+                    "type": "integer",
+                    "description": "Number of times to repeat the key press (1-50, default 1). Only applies to special keys and combos, not plain text. Use for multi-delete, multi-backspace, etc.",
+                },
             },
             "required": ["keys"],
         },
@@ -87,21 +91,25 @@ def _parse_keys(keys: str):
 
 
 def execute_type_keys(
-    keys, sct, mouse_pos: tuple, screen_w: int, screen_h: int
+    keys, sct, mouse_pos: tuple, screen_w: int, screen_h: int, repeat: int = 1
 ) -> dict:
     """Type text or press key(s)."""
+    repeat = max(1, min(50, repeat))
+
     if isinstance(keys, list):
-        # Legacy array format — press combo
-        pyautogui.hotkey(*keys)
+        for _ in range(repeat):
+            pyautogui.hotkey(*keys)
         desc = "+".join(keys)
     elif isinstance(keys, str):
         action, arg = _parse_keys(keys)
         if action == "key":
-            pyautogui.press(arg)
-            desc = f"[{arg}]"
+            for _ in range(repeat):
+                pyautogui.press(arg)
+            desc = f"[{arg}]" + (f" x{repeat}" if repeat > 1 else "")
         elif action == "hotkey":
-            pyautogui.hotkey(*arg)
-            desc = "+".join(arg)
+            for _ in range(repeat):
+                pyautogui.hotkey(*arg)
+            desc = "+".join(arg) + (f" x{repeat}" if repeat > 1 else "")
         else:
             pyautogui.typewrite(arg, interval=0.02)
             desc = repr(arg)
