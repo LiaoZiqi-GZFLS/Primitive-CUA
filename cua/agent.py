@@ -405,6 +405,17 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 raw_ocr = item.get("text", "")
                                 break
 
+                        # Scan for latest list_windows / web_get_content results
+                        latest_windows = "(no list_windows result yet)"
+                        latest_web = "(no web_get_content result yet)"
+                        for m in reversed(messages):
+                            if m["role"] == "tool":
+                                n = m.get("name", "")
+                                if n == "list_windows" and latest_windows.startswith("(no"):
+                                    latest_windows = m.get("content", "")
+                                elif n == "web_get_content" and latest_web.startswith("(no"):
+                                    latest_web = m.get("content", "")
+
                         # Fork agent context. messages already includes the tool
                         # and user image messages from the screenshot result.
                         clean_messages = list(messages)
@@ -415,15 +426,17 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 {"type": "text", "text": (
                                     f"Raw OCR from screenshot (normalized coordinates in parentheses):\n"
                                     f"{raw_ocr}\n\n"
-                                    f"Based on the OCR text, summarize what's useful for the next step.\n"
-                                    f"- Desktop UI: describe which windows are open and WHERE key elements "
-                                    f"are located using coordinates (e.g. 'Start button at (0.05, 0.97), "
-                                    f"Notepad window at (0.5, 0.4)').\n"
-                                    f"- Web content: if a browser is open with a web page visible, note "
-                                    f"that web tools (web_get_content, web_click, web_type) are available "
-                                    f"for precise page interaction instead of screenshot-based clicking.\n"
-                                    f"- If there are input fields or search bars, note their location and "
-                                    f"suggest using paste_text for Chinese input.\n"
+                                    f"Latest list_windows result:\n{latest_windows}\n\n"
+                                    f"Latest web_get_content result:\n{latest_web}\n\n"
+                                    f"Based on all the above, summarize what's useful for the next step.\n"
+                                    f"- Desktop UI: use list_windows + OCR to describe which windows are "
+                                    f"open and WHERE key elements are located using coordinates "
+                                    f"(e.g. 'Start button at (0.05, 0.97), Notepad at (0.5, 0.4)').\n"
+                                    f"- Web content: if web_get_content has data, use it to describe "
+                                    f"page elements. Suggest web tools (web_click, web_type) for "
+                                    f"precise interaction instead of coordinate clicking.\n"
+                                    f"- If there are input fields or search bars, note their location "
+                                    f"and suggest using paste_text for Chinese input.\n"
                                     f"Be concise and actionable, under 300 characters."
                                 )},
                             ],
