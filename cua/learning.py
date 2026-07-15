@@ -147,7 +147,7 @@ def _init_db():
         cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
         conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
         conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
-        conn.execute("DELETE FROM pending_learning WHERE settled=1 AND created_at < ?", (cutoff,))
+        conn.execute("DELETE FROM pending_learning WHERE settled=1")  # always clean settled
 
     # Prune skills if over max (0 = unlimited, skip)
     max_skills = _cfg("autoskill_max_skills", 0)
