@@ -163,7 +163,9 @@ def execute_launch_app(
         pyautogui.hotkey("ctrl", "v")
     time.sleep(0.5)
 
-    # Press Enter to launch
+    # Press Enter twice — Chinese IME may consume the first one
+    pyautogui.press("enter")
+    time.sleep(0.2)
     pyautogui.press("enter")
     time.sleep(1.0)
 

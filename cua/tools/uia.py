@@ -293,6 +293,9 @@ def execute_run_command(command: str) -> dict:
             pyautogui.hotkey("ctrl", "v")
 
         time.sleep(0.2)
+        # Press Enter twice — Chinese IME may consume the first one
+        pyautogui.press("enter")
+        time.sleep(0.1)
         pyautogui.press("enter")
         time.sleep(0.5)
 
