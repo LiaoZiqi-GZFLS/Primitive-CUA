@@ -1,8 +1,12 @@
 """CLI entry point for the CUA agent."""
+import os
 import sys
+
+from openai import OpenAI
 
 from cua.config import load_config
 from cua.agent import run_task
+from cua.learning import reflect_and_learn
 
 
 def main():
@@ -10,6 +14,11 @@ def main():
     config = load_config()
 
     model = config.get("model", "kimi-k2.6")
+    base_url = config.get("base_url", "https://api.moonshot.cn/v1")
+    api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
     print("=" * 60)
     print("CUA - Computer Use Agent")
     print(f"  LLM: {model}")
@@ -22,7 +31,7 @@ def main():
     if args:
         task = " ".join(args)
         print(f"\nTask: {task}\n")
-        _run_with_cancel(task, config)
+        _run_with_cancel(task, config, client, model)
         return
 
     # Interactive mode
@@ -40,14 +49,18 @@ def main():
             break
 
         print()
-        _run_with_cancel(task, config)
+        _run_with_cancel(task, config, client, model)
 
 
-def _run_with_cancel(task: str, config: dict):
-    """Run a task, handling Ctrl+C gracefully."""
+def _run_with_cancel(task: str, config: dict, client: OpenAI, model: str):
+    """Run a task, handling Ctrl+C gracefully, then reflect."""
     try:
         report = run_task(task, config)
         _print_report(report)
+
+        # Post-task reflection
+        tool_log = report.pop("_tool_calls_log", [])
+        reflect_and_learn(task, report, tool_log, client, model)
     except KeyboardInterrupt:
         print("\n  ⏹ Task cancelled.")
         print()

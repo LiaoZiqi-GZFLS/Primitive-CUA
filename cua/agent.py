@@ -11,6 +11,7 @@ from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import build_tools
 from cua.tools.screenshot import _np_to_jpeg_b64
+from cua.learning import get_learnings_prompt
 from cua.overlay import draw_cursor
 
 # Tools that modify system state — trigger auto-verification after execution
@@ -274,9 +275,16 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
 
+        # Inject past learnings into system prompt
+        learnings_text = get_learnings_prompt()
+        system_content = SYSTEM_PROMPT + learnings_text
+
+        # Tool call log for post-task reflection
+        tool_calls_log = []
+
         # Main agent messages
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_content},
             {
                 "role": "user",
                 "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
@@ -368,6 +376,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 if len(args_str) > 120:
                     args_str = args_str[:117] + "..."
                 print(f"  [{name}] {args_str}")
+                tool_calls_log.append(f"[{name}] {args_str}")
 
                 # Save before-screenshot for verify step
                 img_before = img.copy() if name in VERIFY_TOOLS else None
@@ -391,6 +400,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 if name == "finish" and "_finish_report" in result:
                     result["_finish_report"]["tokens"] = token_usage
+                    result["_finish_report"]["_tool_calls_log"] = tool_calls_log
                     return result["_finish_report"]
 
                 content_items = result["content"]
@@ -649,4 +659,5 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
             "steps": [],
             "tokens": token_usage,
+            "_tool_calls_log": tool_calls_log,
         }
