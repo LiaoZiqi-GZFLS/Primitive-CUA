@@ -16,6 +16,11 @@ from cua.tools.clipboard import (
     PASTE_TEXT_SCHEMA, execute_paste_text,
 )
 from cua.tools.think import THINK_SCHEMA, execute_think
+from cua.tools.windows import (
+    LIST_WINDOWS_SCHEMA, execute_list_windows,
+    FOCUS_WINDOW_SCHEMA, execute_focus_window,
+    LAUNCH_APP_SCHEMA, execute_launch_app,
+)
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -31,6 +36,9 @@ TOOLS = [
     READ_CLIPBOARD_SCHEMA,
     PASTE_TEXT_SCHEMA,
     THINK_SCHEMA,
+    LIST_WINDOWS_SCHEMA,
+    FOCUS_WINDOW_SCHEMA,
+    LAUNCH_APP_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -120,6 +128,19 @@ def execute_tool(
 
     elif name == "think":
         return execute_think()
+
+    elif name == "list_windows":
+        return execute_list_windows()
+
+    elif name == "focus_window":
+        return execute_focus_window(
+            args["title"], sct, mouse_pos, screen_w, screen_h
+        )
+
+    elif name == "launch_app":
+        return execute_launch_app(
+            args["name"], sct, mouse_pos, screen_w, screen_h
+        )
 
     elif name == "finish":
         return execute_finish(
