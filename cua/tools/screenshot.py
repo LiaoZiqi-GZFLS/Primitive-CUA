@@ -121,15 +121,28 @@ SCREENSHOT_SCHEMA = {
     "function": {
         "name": "screenshot",
         "description": "Take a full-screen screenshot. Returns the original image, an annotated version with the virtual mouse cursor, and OCR-extracted text from the screen.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "delay": {
+                    "type": "number",
+                    "description": "Seconds to wait before taking the screenshot (0-5, default 0). Use after clicking/launching to let the UI settle before capturing.",
+                },
+            },
+            "required": [],
+        },
     },
 }
 
 
 def execute_screenshot(
-    sct: Any, mouse_pos: tuple[float, float], screen_w: int, screen_h: int
+    sct: Any, mouse_pos: tuple[float, float], screen_w: int, screen_h: int,
+    delay: float = 0.0,
 ) -> dict:
-    """Take a screenshot and return original + annotated as base64 JPEG + OCR text."""
+    """Take a screenshot and return original + annotated as base64 PNG + OCR text."""
+    if delay > 0:
+        import time
+        time.sleep(min(delay, 5.0))
     # Capture full-res for OCR/magnifier
     monitor = sct.monitors[1]
     img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)

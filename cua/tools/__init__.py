@@ -143,7 +143,7 @@ def execute_tool(
         _finish_report: only present for finish tool
     """
     if name == "screenshot":
-        return execute_screenshot(sct, mouse_pos, screen_w, screen_h)
+        return execute_screenshot(sct, mouse_pos, screen_w, screen_h, delay=args.get("delay", 0.0))
 
     elif name == "set_mouse":
         return execute_set_mouse(
