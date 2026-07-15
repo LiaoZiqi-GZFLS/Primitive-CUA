@@ -68,6 +68,77 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
     ]
 
 
+def _cleanup_context(messages: list):
+    """Remove stale image messages after a click.
+
+    Cleans up:
+    1. All set_mouse/magnifier result images (positioning screenshots, no longer needed)
+    2. All verify (BEFORE/AFTER) images except the most recent one
+    """
+    # Find the index of the last verify message
+    last_verify_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg["role"] == "user":
+            content = msg["content"]
+            if isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "text" and "BEFORE" in item.get("text", ""):
+                        last_verify_idx = i
+                        break
+            if last_verify_idx >= 0:
+                break
+
+    removed = 0
+    for i in range(len(messages)):
+        msg = messages[i]
+        if msg["role"] != "user":
+            continue
+        content = msg["content"]
+        if not isinstance(content, list):
+            continue
+
+        # Check if this message has images
+        has_images = any(item.get("type") == "image_url" for item in content)
+        if not has_images:
+            continue
+
+        # Get the text content for classification
+        full_text = " ".join(
+            item.get("text", "") for item in content if item.get("type") == "text"
+        )
+
+        should_clean = False
+        reason = ""
+
+        # Clean set_mouse result images
+        if "After set_mouse" in full_text or "After magnifier" in full_text:
+            should_clean = True
+            reason = "set_mouse/magnifier"
+
+        # Clean older verify images (not the most recent one)
+        if "BEFORE" in full_text and i < last_verify_idx:
+            should_clean = True
+            reason = "old verify"
+
+        if should_clean:
+            new_content = []
+            for item in content:
+                if item.get("type") == "image_url":
+                    removed += 1
+                    continue  # drop the image
+                new_content.append(item)
+            # Add a placeholder so the message structure stays valid
+            new_content.append({
+                "type": "text",
+                "text": f" [images cleaned: {reason}]",
+            })
+            messages[i] = {"role": "user", "content": new_content}
+
+    if removed > 0:
+        print(f"  [cleanup] removed {removed} stale images from context")
+
+
 def run_task(task: str, config: dict | None = None) -> dict:
     """Run a single task. Returns the finish report.
 
@@ -335,6 +406,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             ),
                         })
                     messages.append({"role": "user", "content": verify_content})
+
+                # Context cleanup after click: remove stale image messages
+                if name == "click":
+                    _cleanup_context(messages)
 
         return {
             "success": False,
