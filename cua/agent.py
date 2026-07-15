@@ -410,7 +410,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
     set_think_context(task_class.get("similar", ""))
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
-    _compressed_up_to = 0  # how many action-rounds have been compressed so far
+    _compressed_up_to = 0   # how many action-rounds have been compressed so far
+    _total_action_count = 0  # cumulative count, never decremented by cleanup
 
     from cua.tools.utility import clear_notes
     clear_notes()
@@ -710,18 +711,20 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         print(f"  [ocr-clean] failed: {e}")
 
                 # Verify + Think: after a state-modifying action, show before/after and reflect.
-                if name in VERIFY_TOOLS:
-                    do_verify = args.get("verify", True)
+                do_verify = args.get("verify", True) if name in VERIFY_TOOLS else True
 
                 if name in VERIFY_TOOLS and do_verify:
                     # Start BEFORE OCR in background during the 1s wait
                     from concurrent.futures import ThreadPoolExecutor
                     from cua.tools.screenshot import _get_ocr_engine
-                    before_rgb = img_before[..., [2, 1, 0]]
+                    # Downscale for VLM, keep full-res for OCR
+                    before_scaled, _, _ = downsample_for_vlm(img_before, mouse_pos, screen_w, screen_h)
+                    before_rgb = before_scaled[..., [2, 1, 0]]
+                    before_full = img_before[..., [2, 1, 0]]
 
                     def _ocr_before():
                         engine = _get_ocr_engine()
-                        return engine(before_rgb)
+                        return engine(before_full)
 
                     executor = ThreadPoolExecutor(max_workers=1)
                     before_future = executor.submit(_ocr_before)
@@ -731,12 +734,14 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 
-                    after_rgb = img_after[..., [2, 1, 0]]
+                    after_scaled, _, _ = downsample_for_vlm(img_after, mouse_pos, screen_w, screen_h)
+                    after_rgb = after_scaled[..., [2, 1, 0]]
+                    after_full = img_after[..., [2, 1, 0]]
 
                     # Collect BEFORE OCR result + run AFTER OCR
                     before_result, _ = before_future.result()
                     ocr = _get_ocr_engine()
-                    after_result, _ = ocr(after_rgb)
+                    after_result, _ = ocr(after_full)
                     executor.shutdown(wait=False)
 
                     def _format_ocr(result) -> str:
@@ -817,9 +822,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
                 # Context cleanup after state-changing actions
                 if name in VERIFY_TOOLS:
-                    ac = _cleanup_context(messages)
+                    _total_action_count += 1
+                    _cleanup_context(messages)
                     # Every 10 actions beyond 20, compress the oldest 10
-                    while ac >= _compressed_up_to + 20:
+                    if _total_action_count >= _compressed_up_to + 20:
                         _compress_context(messages, client, model, max_tokens, _compressed_up_to)
                         _compressed_up_to += 10
 

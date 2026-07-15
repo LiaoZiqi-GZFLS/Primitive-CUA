@@ -19,6 +19,9 @@ DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "memory.db"
 SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
 
+# Settlement retry counter
+_settle_retries: dict[int, int] = {}
+
 # ChromaDB for skill similarity search (lazy init)
 _chroma_client = None
 _skills_collection = None
@@ -230,7 +233,7 @@ def _repair_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
     # Last resort: return a placeholder
-    return {"reason": "JSON parse failed, raw: " + text[:200], "fix": "check trace"}
+    return {"completed": False, "summary": "JSON parse failed", "reason": "JSON parse failed, raw: " + text[:200], "fix": "check trace"}
 
 
 def _template_skill(task: str, steps: list[str], tool_log: list[str]) -> dict:
@@ -298,6 +301,7 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         return
 
     try:
+        _ensure_dirs()
         steps = report.get("steps", [])
         skill = _extract_skill_from_trace(task, steps, tool_log, client, model)
         if not skill:
@@ -470,9 +474,11 @@ def settle_pending(client, model: str):
             print(f"  [settle] pending task #{p['id']} settled: completed={verdict['completed']}")
 
         except Exception:
-            # Try up to 3 times, then force plain text
-            retries = p["id"]  # Using id as retry counter approximation
-            if retries >= 3:
+            max_retries = _cfg("pending_max_retries", 3)
+            retries = _settle_retries.get(p["id"], 0)
+            retries += 1
+            _settle_retries[p["id"]] = retries
+            if retries >= max_retries:
                 conn.execute(
                     "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
                     (p["id"],),
@@ -527,5 +533,8 @@ def get_learnings_prompt() -> str:
     return "\n".join(lines) if lines else ""
 
 
-# Initialize DB on import
-_init_db()
+# Initialize DB on import (best-effort, never crash)
+try:
+    _init_db()
+except Exception:
+    pass

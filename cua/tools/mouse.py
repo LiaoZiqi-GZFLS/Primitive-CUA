@@ -296,3 +296,8 @@ def execute_scroll(
         "mouse_pos": mouse_pos,
         "last_screenshot": img,
     }
+
+SCROLL_SCHEMA["function"]["parameters"]["properties"]["verify"] = {
+    "type": "boolean",
+    "description": "Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.",
+}
