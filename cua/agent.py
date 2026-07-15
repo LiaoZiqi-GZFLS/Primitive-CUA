@@ -199,22 +199,23 @@ def _cleanup_context(messages: list):
             })
             messages[i] = {"role": "user", "content": new_content}
 
+    # Track last occurrence of each tool for cleanup
+    last_indices: dict[str, int] = {}
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg["role"] == "tool":
+            name = msg.get("name", "")
+            if name not in last_indices:
+                last_indices[name] = i
+
     # Rule 4: trim stale text from ALL perception tools.
-    # Perception tools produce large text outputs that go stale quickly.
-    # Keep only the most recent result per tool; wipe all older ones.
+    # Keep only the most recent result per perception tool; wipe all older ones.
     PERCEPTION_TOOLS = {
         "web_get_content", "list_windows", "web_list_tabs",
         "ocr", "read_clipboard", "uia_inspect", "uia_get_text",
     }
 
     trimmed = 0
-    last_indices: dict[str, int] = {}
-    for i in range(len(messages) - 1, -1, -1):
-        msg = messages[i]
-        if msg["role"] == "tool":
-            name = msg.get("name", "")
-            if name in PERCEPTION_TOOLS and name not in last_indices:
-                last_indices[name] = i
 
     for i in range(len(messages)):
         msg = messages[i]
@@ -227,8 +228,24 @@ def _cleanup_context(messages: list):
             messages[i]["content"] = f" [trimmed] {first_line}..."
             trimmed += 1
 
-    if removed > 0 or trimmed > 0:
-        print(f"  [cleanup] removed {removed} images, trimmed {trimmed} perception results from context")
+    # Rule 5: after 10+ state-changing actions, wipe ALL old tool output text
+    wiped = 0
+    if action_count >= 10:
+        for i in range(len(messages)):
+            msg = messages[i]
+            if msg["role"] != "tool":
+                continue
+            name = msg.get("name", "")
+            # Keep only the most recent output per tool
+            if i >= last_indices.get(name, i):
+                continue
+            content = msg.get("content", "")
+            if len(content) > 80:
+                messages[i]["content"] = f" [wiped] {content[:80]}..."
+                wiped += 1
+
+    if removed > 0 or trimmed > 0 or wiped > 0:
+        print(f"  [cleanup] removed {removed} images, trimmed {trimmed} perception, wiped {wiped} old tool outputs from context")
 
 
 def run_task(task: str, config: dict | None = None) -> dict:
