@@ -27,6 +27,12 @@ from cua.tools.web import (
     WEB_CLICK_SCHEMA, execute_web_click,
     WEB_TYPE_SCHEMA, execute_web_type,
 )
+from cua.tools.uia import (
+    UIA_INSPECT_SCHEMA, execute_uia_inspect,
+    UIA_CLICK_SCHEMA, execute_uia_click,
+    UIA_SET_VALUE_SCHEMA, execute_uia_set_value,
+    UIA_GET_TEXT_SCHEMA, execute_uia_get_text,
+)
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
@@ -50,6 +56,10 @@ TOOLS = [
     WEB_GET_CONTENT_SCHEMA,
     WEB_CLICK_SCHEMA,
     WEB_TYPE_SCHEMA,
+    UIA_INSPECT_SCHEMA,
+    UIA_CLICK_SCHEMA,
+    UIA_SET_VALUE_SCHEMA,
+    UIA_GET_TEXT_SCHEMA,
     HUMAN_HELP_SCHEMA,
     FINISH_SCHEMA,
 ]
@@ -165,6 +175,18 @@ def execute_tool(
 
     elif name == "web_type":
         return execute_web_type(args["label"], args["text"])
+
+    elif name == "uia_inspect":
+        return execute_uia_inspect(args.get("depth", 3))
+
+    elif name == "uia_click":
+        return execute_uia_click(args["name"])
+
+    elif name == "uia_set_value":
+        return execute_uia_set_value(args["name"], args["value"])
+
+    elif name == "uia_get_text":
+        return execute_uia_get_text(args["name"])
 
     elif name == "request_human_help":
         return execute_human_help(args["request"])
