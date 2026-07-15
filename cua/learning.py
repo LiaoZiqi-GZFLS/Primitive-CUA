@@ -266,6 +266,7 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         return
 
     try:
+        steps = report.get("steps", [])
         skill = _extract_skill_from_trace(task, steps, tool_log, client, model)
         if not skill:
             return
