@@ -372,13 +372,16 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 {"type": "text", "text": (
                                     f"Raw OCR from screenshot (normalized coordinates in parentheses):\n"
                                     f"{raw_ocr}\n\n"
-                                    f"Based on the screenshot and OCR text above, summarize "
-                                    f"information that is useful for the next action. Use the "
-                                    f"coordinates to describe WHERE things are on screen "
-                                    f"(e.g. 'Start button at (0.05, 0.97), Notepad window centered at (0.5, 0.4)'). "
-                                    f"Include: which windows are open, where buttons/menus/input "
-                                    f"fields are located, any relevant text content. "
-                                    f"Be concise and actionable."
+                                    f"Based on the OCR text, summarize what's useful for the next step.\n"
+                                    f"- Desktop UI: describe which windows are open and WHERE key elements "
+                                    f"are located using coordinates (e.g. 'Start button at (0.05, 0.97), "
+                                    f"Notepad window at (0.5, 0.4)').\n"
+                                    f"- Web content: if a browser is open with a web page visible, note "
+                                    f"that web tools (web_get_content, web_click, web_type) are available "
+                                    f"for precise page interaction instead of screenshot-based clicking.\n"
+                                    f"- If there are input fields or search bars, note their location and "
+                                    f"suggest using paste_text for Chinese input.\n"
+                                    f"Be concise and actionable, under 300 characters."
                                 )},
                             ],
                         })
