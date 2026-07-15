@@ -458,6 +458,9 @@ def get_learnings_prompt() -> str:
     recent_reflections = conn.execute(
         "SELECT * FROM reflections ORDER BY created_at DESC LIMIT ?", (max_reflections,)
     ).fetchall()
+    recent_skills = conn.execute(
+        "SELECT name, description, file_path FROM skills_index ORDER BY usage_count DESC LIMIT 5"
+    ).fetchall()
     conn.close()
 
     lines = []
@@ -470,6 +473,10 @@ def get_learnings_prompt() -> str:
         for l in recent_learnings:
             icon = "✓" if l["type"] == "success_pattern" else "✗"
             lines.append(f"- {icon} [{l['context']}] {l['learning']}")
+    if recent_skills:
+        lines.append("\n## Available Skills (from past successes)\n")
+        for s in recent_skills:
+            lines.append(f"- **{s['name']}**: {s['description'][:120]}")
 
     return "\n".join(lines) if lines else ""
 
