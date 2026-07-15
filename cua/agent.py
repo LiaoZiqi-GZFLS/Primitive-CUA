@@ -711,19 +711,30 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     do_verify = args.get("verify", True)
 
                 if name in VERIFY_TOOLS and do_verify:
-                    print(f"  [verify] waiting 1s, taking after-screenshot...")
+                    # Start BEFORE OCR in background during the 1s wait
+                    from concurrent.futures import ThreadPoolExecutor
+                    from cua.tools.screenshot import _get_ocr_engine
+                    before_rgb = img_before[..., [2, 1, 0]]
+
+                    def _ocr_before():
+                        engine = _get_ocr_engine()
+                        return engine(before_rgb)
+
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    before_future = executor.submit(_ocr_before)
+
+                    print(f"  [verify] waiting 1s (OCR in background), taking after-screenshot...")
                     time.sleep(1.0)
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 
-                    before_rgb = img_before[..., [2, 1, 0]]
                     after_rgb = img_after[..., [2, 1, 0]]
 
-                    # OCR both screenshots
-                    from cua.tools.screenshot import _get_ocr_engine
+                    # Collect BEFORE OCR result + run AFTER OCR
+                    before_result, _ = before_future.result()
                     ocr = _get_ocr_engine()
-                    before_result, _ = ocr(before_rgb)
                     after_result, _ = ocr(after_rgb)
+                    executor.shutdown(wait=False)
 
                     def _format_ocr(result) -> str:
                         if not result:
