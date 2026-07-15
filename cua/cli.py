@@ -6,7 +6,7 @@ from openai import OpenAI
 
 from cua.config import load_config
 from cua.agent import run_task
-from cua.learning import reflect_and_learn
+from cua.learning import reflect_and_learn, save_pending, settle_pending
 
 
 def main():
@@ -18,6 +18,9 @@ def main():
     api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
+
+    # Settle any interrupted tasks from previous sessions
+    settle_pending(client, model)
 
     print("=" * 60)
     print("CUA - Computer Use Agent")
@@ -64,6 +67,12 @@ def _run_with_cancel(task: str, config: dict, client: OpenAI, model: str):
     except KeyboardInterrupt:
         print("\n  ⏹ Task cancelled.")
         print()
+        # Save pending for later settlement (Layer 3)
+        try:
+            # We don't have tool_log here, pass empty
+            save_pending(task, "User cancelled (Ctrl+C)", [])
+        except Exception:
+            pass
 
 
 def _print_report(report: dict):

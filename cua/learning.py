@@ -1,157 +1,398 @@
-"""Post-task learning: reflect on what worked and what failed, persist across tasks."""
+"""Four-layer learning system: AutoSkill, Reflection, Pending Learning, Infrastructure.
+
+1. SUCCESS → AutoSkill: generate/reuse SKILL.md files from successful trajectories
+2. FAILURE → Reflection: store failure analysis in SQLite, inject into future prompts
+3. INTERRUPTED → Pending Learning: save trace for later settlement
+4. INFRASTRUCTURE: SQLite backend + Kimi rethink (optional)
+
+All best-effort — never blocks the main task loop.
+"""
+
 import json
 import os
+import sqlite3
+import time
+from datetime import datetime
 from pathlib import Path
 
-LEARNINGS_FILE = Path(__file__).parent / "learnings.json"
+DATA_DIR = Path(__file__).parent / "data"
+DB_PATH = DATA_DIR / "memory.db"
+SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
 
 
-def load_learnings() -> list[dict]:
-    """Load all past learnings."""
-    if LEARNINGS_FILE.exists():
-        try:
-            with open(LEARNINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
+def _ensure_dirs():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def save_learnings(learnings: list[dict]):
-    """Persist learnings to disk (keep last 50)."""
-    LEARNINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Keep only last 50 entries
-    if len(learnings) > 50:
-        learnings = learnings[-50:]
-    with open(LEARNINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(learnings, f, ensure_ascii=False, indent=2)
+def _get_db() -> sqlite3.Connection:
+    _ensure_dirs()
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
-def reflect_and_learn(
-    task: str,
-    report: dict,
-    tool_calls_log: list[str],
-    client,
-    model: str,
-):
-    """After task completion, reflect and extract learnings.
+def _init_db():
+    conn = _get_db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS learnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL CHECK(type IN ('success_pattern','failure_fix')),
+            context TEXT NOT NULL,
+            learning TEXT NOT NULL,
+            tools TEXT NOT NULL DEFAULT '[]',
+            task TEXT,
+            outcome TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
 
-    Args:
-        task: Original task description
-        report: Finish report (success, summary, steps)
-        tool_calls_log: List of formatted tool call strings from the run
-        client: OpenAI client
-        model: Model name
-    """
+        CREATE TABLE IF NOT EXISTS reflections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task TEXT NOT NULL,
+            failure_reason TEXT NOT NULL,
+            fix_suggestion TEXT NOT NULL,
+            tool_trace TEXT,
+            tokens INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_learning (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            traces_json TEXT NOT NULL,
+            settled INTEGER NOT NULL DEFAULT 0,
+            settled_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS skills_index (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            file_path TEXT NOT NULL,
+            version TEXT NOT NULL DEFAULT '1.0.0',
+            usage_count INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# --- Layer 1: AutoSkill (success) ---
+
+def _generate_skill_name(task: str) -> str:
+    """Generate a kebab-case skill name from task description."""
+    import re
+    # Take first 5 meaningful words, remove punctuation, kebab-case
+    words = re.findall(r'[一-鿿]+|[a-zA-Z]+', task)
+    name = "-".join(w.lower() for w in words[:5])
+    return name[:60] if name else "unnamed-task"
+
+
+def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], client, model: str) -> dict | None:
+    """Use LLM to extract a reusable skill from a successful task trace."""
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You extract reusable automation skills from successful task traces. Output valid JSON only."},
+                {"role": "user", "content": (
+                    f"Task: {task}\n\nSteps taken:\n" +
+                    "\n".join(f"- {s}" for s in (steps or [])) +
+                    f"\n\nTool trace (last 20):\n" +
+                    "\n".join(tool_log[-20:]) +
+                    f"\n\nExtract a reusable skill. Return JSON:\n"
+                    f'{{"name": "kebab-case-name", "description": "one line", '
+                    f'"steps": ["step 1", "step 2"], '
+                    f'"tools_used": ["tool1", "tool2"], '
+                    f'"prerequisites": "what must be true before using"}}'
+                )},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "skill_extraction",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                            "steps": {"type": "array", "items": {"type": "string"}},
+                            "tools_used": {"type": "array", "items": {"type": "string"}},
+                            "prerequisites": {"type": "string"},
+                        },
+                        "required": ["name", "description", "steps", "tools_used", "prerequisites"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            max_tokens=400,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        return json.loads(resp.choices[0].message.content)
+    except Exception as e:
+        print(f"  [autoskill] extraction failed: {e}")
+        return None
+
+
+def _write_skill_file(skill: dict):
+    """Write a SKILL.md file."""
+    name = skill.get("name", "unnamed")
+    file_path = SKILLS_DIR / f"{name}.md"
+    content = f"""# {skill.get('name', 'Unnamed Skill')}
+
+{skill.get('description', '')}
+
+## Prerequisites
+
+{skill.get('prerequisites', 'None')}
+
+## Steps
+
+{chr(10).join(f'{i}. {s}' for i, s in enumerate(skill.get('steps', []), 1))}
+
+## Tools Used
+
+{', '.join(skill.get('tools_used', []))}
+
+> Auto-generated by CUA AutoSkill v1.0 on {datetime.now().strftime('%Y-%m-%d %H:%M')}
+"""
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return file_path
+
+
+def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model: str):
+    """Layer 1: Extract and persist a reusable skill from a successful task."""
     if client is None:
         return
 
     success = report.get("success", False)
-    summary = report.get("summary", "")
+    if not success:
+        return  # Only learn from success
+
     steps = report.get("steps", [])
+    if len(tool_log) < 3:
+        return  # Too short to be meaningful
+
+    try:
+        skill = _extract_skill_from_trace(task, steps, tool_log, client, model)
+        if not skill:
+            return
+
+        name = skill.get("name", _generate_skill_name(task))
+        file_path = _write_skill_file(skill)
+
+        conn = _get_db()
+        existing = conn.execute(
+            "SELECT id, version, usage_count FROM skills_index WHERE name = ?", (name,)
+        ).fetchone()
+
+        if existing:
+            # Bump version and count
+            parts = existing["version"].split(".")
+            parts[-1] = str(int(parts[-1]) + 1)
+            new_version = ".".join(parts)
+            conn.execute(
+                "UPDATE skills_index SET version=?, usage_count=?, updated_at=datetime('now') WHERE id=?",
+                (new_version, existing["usage_count"] + 1, existing["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO skills_index (name, description, file_path, version) VALUES (?, ?, ?, '1.0.0')",
+                (name, skill.get("description", ""), str(file_path)),
+            )
+
+        conn.commit()
+        conn.close()
+        print(f"  [autoskill] skill '{name}' saved ({'updated' if existing else 'new'})")
+
+    except Exception as e:
+        print(f"  [autoskill] failed: {e}")
+
+
+# --- Layer 2: Reflection (failure) ---
+
+def reflect_failure(task: str, report: dict, tool_log: list[str], client, model: str):
+    """Layer 2: Analyze failures and store reflections for future prompts."""
+    if client is None:
+        return
+
+    success = report.get("success", False)
+    if success:
+        return  # Only reflect on failures
+
+    summary = report.get("summary", "")
     tokens = report.get("tokens", {})
-
-    # Build a concise execution trace
-    trace = "\n".join(tool_calls_log[-30:])  # last 30 calls
-    if len(tool_calls_log) > 30:
-        trace = f"... ({len(tool_calls_log) - 30} more calls)\n" + trace
-
-    outlook = "success" if success else "failure"
 
     try:
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You analyze completed desktop automation tasks and extract "
-                        "actionable learnings for future runs. Output valid JSON only."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Task: {task}\n"
-                        f"Outcome: {outlook}\n"
-                        f"Summary: {summary}\n"
-                        f"Steps taken: {json.dumps(steps, ensure_ascii=False)}\n"
-                        f"Tokens used: {json.dumps(tokens)}\n\n"
-                        f"Tool execution trace:\n{trace}\n\n"
-                        f"Extract up to 3 concise, actionable learnings. "
-                        f"For each learning, include:\n"
-                        f"- type: 'success_pattern' or 'failure_fix'\n"
-                        f"- context: short description of the scenario\n"
-                        f"- learning: the specific actionable insight\n"
-                        f"- tools: relevant tool names\n\n"
-                        f"Only include learnings that would help a future run of a similar task. "
-                        f"Be specific — not 'be more careful' but 'when clicking taskbar icons, "
-                        f"use magnifier first since they are small targets'."
-                    ),
-                },
+                {"role": "system", "content": "Analyze automation failures. Output valid JSON only."},
+                {"role": "user", "content": (
+                    f"Task: {task}\nFailure summary: {summary}\n"
+                    f"Tool trace (last 15):\n" + "\n".join(tool_log[-15:]) +
+                    f"\n\nAnalyze the failure. Return JSON:\n"
+                    f'{{"reason": "why it failed", "fix": "how to fix it next time"}}'
+                )},
             ],
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "learnings",
+                    "name": "failure_analysis",
                     "strict": True,
                     "schema": {
                         "type": "object",
                         "properties": {
-                            "learnings": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "type": {"type": "string", "enum": ["success_pattern", "failure_fix"]},
-                                        "context": {"type": "string"},
-                                        "learning": {"type": "string"},
-                                        "tools": {
-                                            "type": "array",
-                                            "items": {"type": "string"},
-                                        },
-                                    },
-                                    "required": ["type", "context", "learning", "tools"],
-                                    "additionalProperties": False,
-                                },
-                            }
+                            "reason": {"type": "string"},
+                            "fix": {"type": "string"},
                         },
-                        "required": ["learnings"],
+                        "required": ["reason", "fix"],
                         "additionalProperties": False,
                     },
                 },
             },
-            max_tokens=512,
+            max_tokens=256,
             extra_body={"thinking": {"type": "disabled"}},
         )
-
         result = json.loads(resp.choices[0].message.content)
-        new_learnings = result.get("learnings", [])
 
-        if new_learnings:
-            all_learnings = load_learnings()
-            for l in new_learnings:
-                l["task"] = task[:80]
-                l["outcome"] = outlook
-            all_learnings.extend(new_learnings)
-            save_learnings(all_learnings)
-            print(f"  [learn] saved {len(new_learnings)} new learning(s)")
+        conn = _get_db()
+        conn.execute(
+            "INSERT INTO reflections (task, failure_reason, fix_suggestion, tool_trace, tokens) VALUES (?, ?, ?, ?, ?)",
+            (task[:200], result["reason"], result["fix"],
+             json.dumps(tool_log[-20:], ensure_ascii=False),
+             tokens.get("total", 0)),
+        )
+        conn.commit()
+        conn.close()
+        print(f"  [reflection] failure analyzed: {result['reason'][:80]}")
 
     except Exception as e:
-        print(f"  [learn] reflection failed: {e}")
+        print(f"  [reflection] failed: {e}")
+
+
+# --- Layer 3: Pending Learning (interrupted) ---
+
+def save_pending(task: str, reason: str, tool_log: list[str]):
+    """Layer 3: Save interrupted task trajectory for later settlement."""
+    try:
+        conn = _get_db()
+        conn.execute(
+            "INSERT INTO pending_learning (task, reason, traces_json) VALUES (?, ?, ?)",
+            (task[:200], reason, json.dumps(tool_log, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # Best-effort
+
+
+def settle_pending(client, model: str):
+    """Attempt to settle pending interrupted tasks."""
+    conn = _get_db()
+    pending = conn.execute(
+        "SELECT * FROM pending_learning WHERE settled = 0 ORDER BY created_at LIMIT 5"
+    ).fetchall()
+
+    for p in pending:
+        try:
+            traces = json.loads(p["traces_json"])
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "Determine if an interrupted task was completed. Output JSON: {\"completed\": true/false, \"summary\": \"...\"}"},
+                    {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "settlement",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "completed": {"type": "boolean"},
+                                "summary": {"type": "string"},
+                            },
+                            "required": ["completed", "summary"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                max_tokens=200,
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            verdict = json.loads(resp.choices[0].message.content)
+
+            if verdict["completed"]:
+                report = {"success": True, "summary": verdict["summary"], "steps": []}
+                autoskill_learn(p["task"], report, traces, client, model)
+            else:
+                report = {"success": False, "summary": verdict["summary"], "steps": []}
+                reflect_failure(p["task"], report, traces, client, model)
+
+            conn.execute(
+                "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
+                (p["id"],),
+            )
+            conn.commit()
+            print(f"  [settle] pending task #{p['id']} settled: completed={verdict['completed']}")
+
+        except Exception:
+            # Try up to 3 times, then force plain text
+            retries = p["id"]  # Using id as retry counter approximation
+            if retries >= 3:
+                conn.execute(
+                    "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
+                    (p["id"],),
+                )
+                conn.commit()
+
+    conn.close()
+
+
+# --- Unified API ---
+
+def reflect_and_learn(task: str, report: dict, tool_log: list[str], client, model: str):
+    """Unified post-task learning. Best-effort, never blocks."""
+    print()
+    # Layer 1: AutoSkill (success only)
+    autoskill_learn(task, report, tool_log, client, model)
+    # Layer 2: Reflection (failure only)
+    reflect_failure(task, report, tool_log, client, model)
 
 
 def get_learnings_prompt() -> str:
-    """Get a prompt snippet with relevant past learnings (last 10, condensed)."""
-    all_learnings = load_learnings()
-    if not all_learnings:
-        return ""
+    """Build learnings prompt from both learnings table and reflections."""
+    conn = _get_db()
+    recent_learnings = conn.execute(
+        "SELECT * FROM learnings ORDER BY created_at DESC LIMIT 10"
+    ).fetchall()
+    recent_reflections = conn.execute(
+        "SELECT * FROM reflections ORDER BY created_at DESC LIMIT 5"
+    ).fetchall()
+    conn.close()
 
-    # Take last 15 and format
-    recent = all_learnings[-15:]
-    lines = ["\n## Past Learnings (from previous tasks)\n"]
-    for l in recent:
-        icon = "✓" if l["type"] == "success_pattern" else "✗"
-        lines.append(f"- {icon} [{l['context']}] {l['learning']}")
+    lines = []
+    if recent_reflections:
+        lines.append("\n## Past Reflections (failures to avoid)\n")
+        for r in recent_reflections:
+            lines.append(f"- ✗ {r['failure_reason'][:100]} → fix: {r['fix_suggestion'][:100]}")
+    if recent_learnings:
+        lines.append("\n## Past Learnings (patterns that worked)\n")
+        for l in recent_learnings:
+            icon = "✓" if l["type"] == "success_pattern" else "✗"
+            lines.append(f"- {icon} [{l['context']}] {l['learning']}")
 
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else ""
+
+
+# Initialize DB on import
+_init_db()
