@@ -22,6 +22,17 @@ DEFAULTS = {
         "color": "#e74c3c",
         "white": "#ffffff",
     },
+    "learning": {
+        "autoskill_enabled": True,          # Generate skills from successful tasks
+        "autoskill_min_steps": 3,           # Minimum tool calls before learning
+        "autoskill_max_skills": 50,         # Max stored skills before pruning
+        "reflection_enabled": True,         # Analyze failures
+        "reflection_max_prompt": 5,         # Past reflections to inject in prompt
+        "learnings_max_prompt": 10,         # Past learnings to inject in prompt
+        "pending_enabled": True,            # Save interrupted task traces
+        "pending_max_retries": 3,           # Settlement retries before force-write
+        "cleanup_days": 30,                 # Auto-delete learnings older than N days
+    },
 }
 
 

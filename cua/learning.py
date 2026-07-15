@@ -12,12 +12,25 @@ import json
 import os
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "memory.db"
 SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
+
+
+def _get_learning_config() -> dict:
+    """Get learning config with defaults."""
+    try:
+        from cua.config import load_config
+        return load_config().get("learning", {})
+    except Exception:
+        return {}
+
+
+def _cfg(key: str, default=None):
+    return _get_learning_config().get(key, default)
 
 
 def _ensure_dirs():
@@ -78,6 +91,23 @@ def _init_db():
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
+    # Cleanup expired entries
+    cleanup_days = _cfg("cleanup_days", 30)
+    cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
+    conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
+    conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
+    conn.execute("DELETE FROM pending_learning WHERE settled=1 AND created_at < ?", (cutoff,))
+
+    # Prune skills if over max
+    max_skills = _cfg("autoskill_max_skills", 50)
+    count = conn.execute("SELECT COUNT(*) as n FROM skills_index").fetchone()["n"]
+    if count > max_skills:
+        excess = count - max_skills
+        conn.execute(
+            "DELETE FROM skills_index WHERE id IN (SELECT id FROM skills_index ORDER BY usage_count ASC, created_at ASC LIMIT ?)",
+            (excess,),
+        )
+
     conn.commit()
     conn.close()
 
@@ -174,11 +204,14 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
 
     success = report.get("success", False)
     if not success:
-        return  # Only learn from success
+        return
 
-    steps = report.get("steps", [])
-    if len(tool_log) < 3:
-        return  # Too short to be meaningful
+    if not _cfg("autoskill_enabled", True):
+        return
+
+    min_steps = _cfg("autoskill_min_steps", 3)
+    if len(tool_log) < min_steps:
+        return
 
     try:
         skill = _extract_skill_from_trace(task, steps, tool_log, client, model)
@@ -225,7 +258,9 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
 
     success = report.get("success", False)
     if success:
-        return  # Only reflect on failures
+        return
+    if not _cfg("reflection_enabled", True):
+        return
 
     summary = report.get("summary", "")
     tokens = report.get("tokens", {})
@@ -282,6 +317,8 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
 
 def save_pending(task: str, reason: str, tool_log: list[str]):
     """Layer 3: Save interrupted task trajectory for later settlement."""
+    if not _cfg("pending_enabled", True):
+        return
     try:
         conn = _get_db()
         conn.execute(
@@ -372,11 +409,13 @@ def reflect_and_learn(task: str, report: dict, tool_log: list[str], client, mode
 def get_learnings_prompt() -> str:
     """Build learnings prompt from both learnings table and reflections."""
     conn = _get_db()
+    max_learnings = _cfg("learnings_max_prompt", 10)
+    max_reflections = _cfg("reflection_max_prompt", 5)
     recent_learnings = conn.execute(
-        "SELECT * FROM learnings ORDER BY created_at DESC LIMIT 10"
+        "SELECT * FROM learnings ORDER BY created_at DESC LIMIT ?", (max_learnings,)
     ).fetchall()
     recent_reflections = conn.execute(
-        "SELECT * FROM reflections ORDER BY created_at DESC LIMIT 5"
+        "SELECT * FROM reflections ORDER BY created_at DESC LIMIT ?", (max_reflections,)
     ).fetchall()
     conn.close()
 
