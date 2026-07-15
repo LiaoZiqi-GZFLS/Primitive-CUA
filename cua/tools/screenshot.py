@@ -12,22 +12,35 @@ from cua.overlay import draw_cursor
 def _downscale(img: np.ndarray, screen_w: int, screen_h: int) -> tuple[np.ndarray, float]:
     """Tiered downscaling to reduce VLM token consumption.
 
+    Scaling strategy:
+    - 1080p (≤1920) → keep original
+    - 2K (≤2560)     → target 1080p
+    - 4K (≤4096)     → target 2K
+    - 4K+             → target 4K
+
     Returns (resized_image, scale_factor).
     """
     max_dim = max(screen_w, screen_h)
     if max_dim <= 1920:
-        return img, 1.0  # 1080p — keep original
+        target_w, target_h = screen_w, screen_h  # 1080p — keep
+    elif max_dim <= 2560:
+        # 2K → 1080p
+        scale = 1920 / max_dim
+        target_w, target_h = int(screen_w * scale), int(screen_h * scale)
     elif max_dim <= 4096:
-        # 2K/4K — divide by 2 (75% pixel reduction)
-        factor = 2
+        # 4K → 2K
+        scale = 2560 / max_dim
+        target_w, target_h = int(screen_w * scale), int(screen_h * scale)
     else:
-        # 8K+ — divide by 4 (93% pixel reduction)
-        factor = 4
+        # 4K+ → 4K
+        scale = 3840 / max_dim
+        target_w, target_h = int(screen_w * scale), int(screen_h * scale)
+
+    factor = screen_w / target_w
 
     h, w = img.shape[:2]
-    new_w, new_h = w // factor, h // factor
     pil = Image.fromarray(img[..., [2, 1, 0, 3]] if img.shape[-1] == 4 else img)
-    pil = pil.resize((new_w, new_h), Image.LANCZOS)
+    pil = pil.resize((target_w, target_h), Image.LANCZOS)
     result = np.array(pil)
     if img.shape[-1] == 4:
         result = result[..., [2, 1, 0, 3]]  # RGBA → BGRA
