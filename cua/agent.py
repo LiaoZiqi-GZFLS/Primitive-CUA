@@ -489,8 +489,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         })
                     messages.append({"role": "user", "content": verify_content})
 
-                # Context cleanup after click: remove stale image messages
-                if name == "click":
+                # Context cleanup after state-changing actions
+                if name in VERIFY_TOOLS:
                     _cleanup_context(messages)
 
         return {
