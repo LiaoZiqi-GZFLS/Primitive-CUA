@@ -13,7 +13,14 @@ from cua.tools.screenshot import _np_to_jpeg_b64
 from cua.overlay import draw_cursor
 
 # Tools that modify system state — trigger auto-verification after execution
-VERIFY_TOOLS = {"click", "drag", "type_keys", "paste_text"}
+VERIFY_TOOLS = {
+    # Desktop action tools
+    "click", "drag", "type_keys", "paste_text",
+    # Windows management
+    "focus_window", "launch_app",
+    # Web tools
+    "web_navigate", "web_click", "web_type",
+}
 
 
 SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools. You operate in a tool-calling loop: you see screenshots, call tools to act, receive new screenshots, and continue until the task is done.
