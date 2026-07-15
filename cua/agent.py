@@ -34,6 +34,10 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **list_windows**: List all open windows with titles, positions, and visibility. Use to find running apps before clicking around.
 - **focus_window(title)**: Bring a window to front by matching its title (partial match). Use list_windows first to find the exact title.
 - **launch_app(name)**: Launch an app via Start menu search (Win key → type name → Enter). E.g. 'Notepad', 'Chrome', '微信'.
+- **web_navigate(url)**: Open a URL in the Playwright browser. Use for all web tasks.
+- **web_get_content()**: Extract page title, headings, buttons, links, inputs, text. Use instead of screenshot+OCR for web pages.
+- **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
+- **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling.
 - **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
 
 ## Critical Rules

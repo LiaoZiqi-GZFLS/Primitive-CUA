@@ -21,6 +21,12 @@ from cua.tools.windows import (
     FOCUS_WINDOW_SCHEMA, execute_focus_window,
     LAUNCH_APP_SCHEMA, execute_launch_app,
 )
+from cua.tools.web import (
+    WEB_NAVIGATE_SCHEMA, execute_web_navigate,
+    WEB_GET_CONTENT_SCHEMA, execute_web_get_content,
+    WEB_CLICK_SCHEMA, execute_web_click,
+    WEB_TYPE_SCHEMA, execute_web_type,
+)
 from cua.tools.finish import FINISH_SCHEMA, FINISH_SENTINEL, execute_finish
 
 
@@ -39,6 +45,10 @@ TOOLS = [
     LIST_WINDOWS_SCHEMA,
     FOCUS_WINDOW_SCHEMA,
     LAUNCH_APP_SCHEMA,
+    WEB_NAVIGATE_SCHEMA,
+    WEB_GET_CONTENT_SCHEMA,
+    WEB_CLICK_SCHEMA,
+    WEB_TYPE_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -141,6 +151,18 @@ def execute_tool(
         return execute_launch_app(
             args["name"], sct, mouse_pos, screen_w, screen_h
         )
+
+    elif name == "web_navigate":
+        return execute_web_navigate(args["url"])
+
+    elif name == "web_get_content":
+        return execute_web_get_content()
+
+    elif name == "web_click":
+        return execute_web_click(args["text"])
+
+    elif name == "web_type":
+        return execute_web_type(args["label"], args["text"])
 
     elif name == "finish":
         return execute_finish(
