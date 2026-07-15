@@ -173,6 +173,9 @@ def build_tools(task: str, client=None, model: str = "kimi-k2.6"):
     # Search ChromaDB for similar past learnings
     task_summary = c.get("summary", task[:80])
     similar = _search_similar(task_summary)
+    if similar:
+        count = similar.count("\n- ")
+        print(f"  [memory] found {count} relevant past skill(s) for: {task_summary[:60]}")
 
     tool_names = list(BASE_TOOLS)
     tool_names.extend(WINDOWS_TOOLS)
