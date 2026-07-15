@@ -116,6 +116,11 @@ CLICK_SCHEMA = {
     },
 }
 
+CLICK_SCHEMA["function"]["parameters"]["properties"]["verify"] = {
+    "type": "boolean",
+    "description": "Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.",
+}
+
 
 def execute_click(
     button: str,
@@ -179,6 +184,11 @@ DRAG_SCHEMA = {
             "required": ["from_x", "from_y", "to_x", "to_y"],
         },
     },
+}
+
+DRAG_SCHEMA["function"]["parameters"]["properties"]["verify"] = {
+    "type": "boolean",
+    "description": "Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.",
 }
 
 

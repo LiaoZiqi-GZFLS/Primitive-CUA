@@ -78,7 +78,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 
 2. **Act, don't describe**: Don't tell me what you plan to do — just call the tool. Take one action at a time, observe the result, then take the next action. However, when you call a tool, briefly explain your reasoning in the content field — what you're doing and why.
 
-3. **Verify with screenshots**: After every action you receive new screenshots. Use them to confirm the action had the expected effect. If something went wrong, try an alternative approach.
+3. **verify parameter**: All action tools accept an optional verify boolean (default true). Set verify=false for rapid multi-step sequences to skip the before/after screenshot comparison — think() is still injected after every action regardless. Only use verify=false for fast consecutive operations; use verify=true (or omit) for normal use.
 
 4. **Coordinates**: (0,0)=top-left, (1,1)=bottom-right. Use exactly 4 decimal places. The annotated screenshot shows WHERE the cursor currently is with a red crosshair. To click something: FIRST set_mouse() to position the cursor, THEN click().
 
@@ -694,10 +694,17 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     except Exception as e:
                         print(f"  [ocr-clean] failed: {e}")
 
-                # Verify + Think: after a state-modifying action, show before/after and reflect
+                # Verify + Think: after a state-modifying action, show before/after and reflect.
                 if name in VERIFY_TOOLS:
-                    print(f"  [verify] waiting 1s, taking after-screenshot...")
-                    time.sleep(1.0)
+                    do_verify = args.get("verify", True)
+                    if not do_verify:
+                        # Skip verify but still inject think
+                        print(f"  [verify] skipped (verify=false), injecting think...")
+                        from cua.tools.think import THINK_PROMPT
+                        messages.append({"role": "user", "content": [{"type": "text", "text": THINK_PROMPT}]})
+                    else:
+                        print(f"  [verify] waiting 1s, taking after-screenshot...")
+                        time.sleep(1.0)
                     img_after = np.array(sct.grab(monitor))
                     img = img_after  # update current screenshot
 

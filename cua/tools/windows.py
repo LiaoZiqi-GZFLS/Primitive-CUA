@@ -184,3 +184,7 @@ def execute_launch_app(
         "mouse_pos": mouse_pos,
         "last_screenshot": img,
     }
+
+FOCUS_WINDOW_SCHEMA["function"]["parameters"]["properties"]["verify"] = {'type': 'boolean', 'description': 'Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.'}
+
+LAUNCH_APP_SCHEMA["function"]["parameters"]["properties"]["verify"] = {'type': 'boolean', 'description': 'Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.'}

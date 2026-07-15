@@ -36,6 +36,11 @@ PASTE_TEXT_SCHEMA = {
     },
 }
 
+PASTE_TEXT_SCHEMA["function"]["parameters"]["properties"]["verify"] = {
+    "type": "boolean",
+    "description": "Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.",
+}
+
 
 def execute_read_clipboard() -> dict:
     """Read text from system clipboard."""

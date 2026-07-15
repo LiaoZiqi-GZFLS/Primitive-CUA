@@ -59,6 +59,11 @@ TYPE_KEYS_SCHEMA = {
     },
 }
 
+TYPE_KEYS_SCHEMA["function"]["parameters"]["properties"]["verify"] = {
+    "type": "boolean",
+    "description": "Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.",
+}
+
 
 def _parse_keys(keys: str):
     """Parse a keys string into (action, args).

@@ -305,3 +305,7 @@ def execute_run_command(command: str) -> dict:
             "content": [{"type": "text", "text": f"Run command failed: {e}"}],
             "mouse_pos": None, "last_screenshot": None,
         }
+
+UIA_CLICK_SCHEMA["function"]["parameters"]["properties"]["verify"] = {'type': 'boolean', 'description': 'Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.'}
+
+UIA_SET_VALUE_SCHEMA["function"]["parameters"]["properties"]["verify"] = {'type': 'boolean', 'description': 'Auto-verify and think after action? Default true. Set false for rapid multi-step sequences.'}
