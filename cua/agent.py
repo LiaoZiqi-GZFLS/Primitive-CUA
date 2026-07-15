@@ -258,6 +258,55 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     before_rgb = img_before[..., [2, 1, 0]]
                     after_rgb = img_after[..., [2, 1, 0]]
 
+                    # OCR both screenshots
+                    from rapidocr_onnxruntime import RapidOCR
+                    ocr = RapidOCR()
+                    before_result, _ = ocr(before_rgb)
+                    after_result, _ = ocr(after_rgb)
+
+                    def _format_ocr(result) -> str:
+                        if not result:
+                            return "[no text]"
+                        return " ".join(f"[{item[1]}]" for item in result)
+
+                    before_ocr = _format_ocr(before_result)
+                    after_ocr = _format_ocr(after_result)
+                    print(f"  [verify] OCR: before={len(before_result or [])} blocks, after={len(after_result or [])} blocks")
+
+                    # Fresh LLM call to analyze OCR differences
+                    delta_summary = ""
+                    try:
+                        analysis = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You analyze desktop changes by comparing OCR text from "
+                                        "BEFORE and AFTER screenshots. Output a concise summary "
+                                        "in Chinese: what windows opened/closed, what text "
+                                        "appeared/disappeared, what UI elements changed. "
+                                        "Be specific. Keep it under 200 characters."
+                                    ),
+                                },
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"BEFORE OCR:\n{before_ocr}\n\n"
+                                        f"AFTER OCR:\n{after_ocr}\n\n"
+                                        f"Action: {name}\n"
+                                        f"Analyze what changed on screen."
+                                    ),
+                                },
+                            ],
+                            max_tokens=256,
+                            extra_body={"thinking": {"type": "disabled"}},
+                        )
+                        delta_summary = analysis.choices[0].message.content or ""
+                        print(f"  [verify] delta analysis: {delta_summary[:120]}")
+                    except Exception as e:
+                        print(f"  [verify] delta analysis failed: {e}")
+
                     from cua.tools.think import THINK_PROMPT
 
                     verify_content = [
@@ -265,17 +314,27 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(before_rgb)}},
                         {"type": "text", "text": f"AFTER {name}:"},
                         {"type": "image_url", "image_url": {"url": _np_to_jpeg_b64(after_rgb)}},
-                        {
+                    ]
+                    if delta_summary:
+                        verify_content.append({
                             "type": "text",
                             "text": (
-                                f"You just called {name}. Above are BEFORE and AFTER screenshots "
-                                f"(without cursor overlay). Compare them carefully to verify "
-                                f"whether the action had the expected effect. "
+                                f"OCR analysis of changes: {delta_summary}\n\n"
+                                f"You just called {name}. Compare the BEFORE/AFTER screenshots "
+                                f"to verify the action's effect. Then reflect on what to do next.\n\n"
+                                f"{THINK_PROMPT}"
+                            ),
+                        })
+                    else:
+                        verify_content.append({
+                            "type": "text",
+                            "text": (
+                                f"You just called {name}. Compare the BEFORE/AFTER screenshots "
+                                f"to verify the action's effect. "
                                 f"Then reflect on what to do next.\n\n"
                                 f"{THINK_PROMPT}"
                             ),
-                        },
-                    ]
+                        })
                     messages.append({"role": "user", "content": verify_content})
 
         return {
