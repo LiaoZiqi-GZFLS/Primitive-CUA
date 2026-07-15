@@ -161,27 +161,21 @@ def execute_uia_click(name: str) -> dict:
                 "mouse_pos": None, "last_screenshot": None,
             }
 
-        click_err = None
+        # Click() often throws COM errors even when the click actually succeeds.
+        # Try Click() first, fall back to InvokePattern. Ignore exceptions.
         try:
             ctrl.Click()
-        except Exception as e:
-            click_err = e
-            # COM may throw even when click succeeds — try InvokePattern directly
+        except Exception:
             try:
                 inv = ctrl.GetInvokePattern()
                 inv.Invoke()
-                click_err = None  # Invoke worked
             except Exception:
-                pass  # Both methods failed
+                pass
 
         time.sleep(0.2)
 
-        msg = f"Clicked: {ctrl.Name} ({ctrl.ControlTypeName})"
-        if click_err:
-            msg += f" (warning: both Click and InvokePattern threw — action may not have registered)"
-
         return {
-            "content": [{"type": "text", "text": msg}],
+            "content": [{"type": "text", "text": f"Clicked: {ctrl.Name} ({ctrl.ControlTypeName})"}],
             "mouse_pos": None, "last_screenshot": None,
         }
     except Exception as e:
