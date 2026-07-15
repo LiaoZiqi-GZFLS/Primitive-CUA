@@ -238,3 +238,61 @@ def execute_drag(
         "mouse_pos": new_mouse,
         "last_screenshot": img,
     }
+
+
+# --- Scroll tool ---
+
+SCROLL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "scroll",
+        "description": "Scroll at a specific screen position. Use 'up'/'down' for line scrolling (amount = number of scroll clicks), or 'pageup'/'pagedown' for full page scrolls.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "Horizontal position (normalized 0-1)"},
+                "y": {"type": "number", "description": "Vertical position (normalized 0-1)"},
+                "direction": {"type": "string", "enum": ["up", "down", "pageup", "pagedown"], "description": "Scroll direction"},
+                "amount": {"type": "integer", "description": "Number of scroll clicks (default 3). Only for up/down."},
+            },
+            "required": ["x", "y", "direction"],
+        },
+    },
+}
+
+
+def execute_scroll(
+    x: float, y: float, direction: str, amount: int,
+    sct, screen_w: int, screen_h: int,
+) -> dict:
+    """Scroll at a specific position."""
+    px = _denorm(x, screen_w)
+    py = _denorm(y, screen_h)
+
+    if direction in ("pageup", "pagedown"):
+        pyautogui.moveTo(px, py)
+        pyautogui.press(direction)
+    else:
+        amount = max(1, min(50, amount or 3))
+        pyautogui.scroll(amount if direction == "up" else -amount, x=px, y=py)
+
+    time.sleep(0.1)
+
+    img = _grab_screen(sct)
+    mouse_pos = (_norm(px, screen_w), _norm(py, screen_h))
+    scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
+    from cua.overlay import draw_cursor
+    annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
+
+    scaled_rgb = scaled_img[..., [2, 1, 0]]
+    annotated_rgb = annotated[..., [2, 1, 0]]
+
+    return {
+        "content": [
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled_rgb)}},
+            {"type": "image_url", "image_url": {"url": _np_to_png_b64(annotated_rgb)}},
+            {"type": "text", "text": f"Scrolled {direction}" + (f" x{amount}" if direction in ("up", "down") else "")},
+        ],
+        "mouse_pos": mouse_pos,
+        "last_screenshot": img,
+    }

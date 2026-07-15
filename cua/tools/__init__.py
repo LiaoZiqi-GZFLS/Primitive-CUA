@@ -7,6 +7,7 @@ from cua.tools.mouse import (
     SET_MOUSE_SCHEMA, execute_set_mouse,
     CLICK_SCHEMA, execute_click,
     DRAG_SCHEMA, execute_drag,
+    SCROLL_SCHEMA, execute_scroll,
 )
 from cua.tools.keyboard import TYPE_KEYS_SCHEMA, execute_type_keys
 from cua.tools.magnifier import MAGNIFIER_SCHEMA, execute_magnifier
@@ -71,6 +72,7 @@ TOOLS = [
     SET_MOUSE_SCHEMA,
     CLICK_SCHEMA,
     DRAG_SCHEMA,
+    SCROLL_SCHEMA,
     TYPE_KEYS_SCHEMA,
     MAGNIFIER_SCHEMA,
     OCR_SCHEMA,
@@ -164,6 +166,14 @@ def execute_tool(
         return execute_drag(
             args["from_x"], args["from_y"],
             args["to_x"], args["to_y"],
+            sct, screen_w, screen_h,
+        )
+
+    elif name == "scroll":
+        return execute_scroll(
+            args["x"], args["y"],
+            args["direction"],
+            args.get("amount", 3),
             sct, screen_w, screen_h,
         )
 

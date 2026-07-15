@@ -25,7 +25,7 @@ def get_last_tool_log() -> list[str]:
 # Tools that modify system state — trigger auto-verification after execution
 VERIFY_TOOLS = {
     # Desktop action tools
-    "click", "drag", "type_keys", "paste_text",
+    "click", "drag", "scroll", "type_keys", "paste_text",
     # Windows management
     "focus_window", "launch_app",
     # Web tools
@@ -46,6 +46,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **set_mouse(x, y)**: Move virtual mouse to normalized coordinates (0.0-1.0, 4 decimal places).
 - **click(button, type, count, scroll)**: Click at current mouse position. button: left/right/middle. type: single/double. count: number of clicks. scroll: positive=up, negative=down.
 - **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another.
+- **scroll(x, y, direction, amount?)**: Scroll at a position. direction: up/down/pageup/pagedown. amount for up/down (default 3).
 - **type_keys(keys, repeat?)**: Keyboard shortcuts and special keys ONLY ("ctrl+c", "enter", "tab", "escape", "backspace", "delete", "f5", "alt+tab", "win+r"). Use repeat=N for multiple presses (e.g. "backspace" repeat=10). DO NOT use for typing text — use paste_text for ALL text input.
 - **magnifier**: Square crop centered on cursor, side = half the shorter screen edge. Use for fine details.
 - **ocr**: Run OCR on the current screenshot. Returns text blocks with positions and confidence.
