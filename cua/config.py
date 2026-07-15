@@ -24,7 +24,7 @@ DEFAULTS = {
     },
     "learning": {
         "autoskill_enabled": True,          # Generate skills from successful tasks
-        "autoskill_min_steps": 3,           # Minimum tool calls before learning
+        "autoskill_min_steps": 2,           # Minimum tool calls before learning
         "autoskill_max_skills": 0,          # Max stored skills (0=unlimited)
         "reflection_enabled": True,         # Analyze failures
         "reflection_max_prompt": 5,         # Past reflections to inject in prompt
