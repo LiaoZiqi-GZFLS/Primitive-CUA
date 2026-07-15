@@ -20,6 +20,9 @@ VERIFY_TOOLS = {
     "focus_window", "launch_app",
     # Web tools
     "web_navigate", "web_click", "web_type",
+    "web_new_tab", "web_switch_tab", "web_close_tab",
+    "web_refresh", "web_back", "web_forward",
+    "web_press", "web_scroll",
     # UIA tools that modify state
     "uia_click", "uia_set_value",
 }
