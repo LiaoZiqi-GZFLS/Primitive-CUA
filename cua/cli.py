@@ -69,6 +69,10 @@ def _print_report(report: dict):
         for i, step in enumerate(steps, 1):
             print(f"  {i}. {step}")
 
+    tokens = report.get("tokens")
+    if tokens:
+        print(f"\nTokens: {tokens['total']:,} total ({tokens['prompt']:,} prompt + {tokens['completion']:,} completion)")
+
     print()
 
 

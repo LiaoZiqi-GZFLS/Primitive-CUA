@@ -231,6 +231,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
     client = OpenAI(api_key=api_key, base_url=base_url)
 
+    token_usage = {"prompt": 0, "completion": 0, "total": 0}
+
     with mss.mss() as sct:
         monitor = sct.monitors[1]
         screen_w = monitor["width"]
@@ -275,6 +277,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 print(f"  API error (retrying in 2s): {e}")
                 time.sleep(2)
                 continue
+
+            if hasattr(response, "usage") and response.usage:
+                token_usage["prompt"] += response.usage.prompt_tokens or 0
+                token_usage["completion"] += response.usage.completion_tokens or 0
+                token_usage["total"] += response.usage.total_tokens or 0
 
             choice = response.choices[0]
             msg = choice.message
@@ -353,6 +360,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     img = result["last_screenshot"]
 
                 if name == "finish" and "_finish_report" in result:
+                    result["_finish_report"]["tokens"] = token_usage
                     return result["_finish_report"]
 
                 content_items = result["content"]
@@ -424,6 +432,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             extra_body={"thinking": {"type": "disabled"}},
                         )
                         cleaned_ocr = clean_resp.choices[0].message.content or ""
+                        if hasattr(clean_resp, "usage") and clean_resp.usage:
+                            token_usage["prompt"] += clean_resp.usage.prompt_tokens or 0
+                            token_usage["completion"] += clean_resp.usage.completion_tokens or 0
+                            token_usage["total"] += clean_resp.usage.total_tokens or 0
                         print(f"  [ocr-clean] cleaned: {cleaned_ocr[:120]}")
 
                         # Append cleaned OCR as a user message for the agent
@@ -490,6 +502,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             extra_body={"thinking": {"type": "disabled"}},
                         )
                         delta_summary = analysis.choices[0].message.content or ""
+                        if hasattr(analysis, "usage") and analysis.usage:
+                            token_usage["prompt"] += analysis.usage.prompt_tokens or 0
+                            token_usage["completion"] += analysis.usage.completion_tokens or 0
+                            token_usage["total"] += analysis.usage.total_tokens or 0
                         print(f"  [verify] analyst: {delta_summary[:120]}")
                     except Exception as e:
                         print(f"  [verify] analyst failed: {e}")
@@ -532,4 +548,5 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "success": False,
             "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
             "steps": [],
+            "tokens": token_usage,
         }
