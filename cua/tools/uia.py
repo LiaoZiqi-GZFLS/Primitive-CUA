@@ -243,3 +243,56 @@ def execute_uia_get_text(name: str) -> dict:
             "content": [{"type": "text", "text": f"UIA get_text failed: {e}"}],
             "mouse_pos": None, "last_screenshot": None,
         }
+
+
+# --- Run dialog ---
+
+RUN_COMMAND_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "run_command",
+        "description": "Open the Windows Run dialog (Win+R), type a command, and press Enter. Use for: opening paths ('C:\\Users'), launching executables ('cmd', 'notepad', 'control'), opening URLs, running shell commands. Faster than Start menu search for system commands.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Command to run — path, executable name, URL, or shell command",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+
+def execute_run_command(command: str) -> dict:
+    """Win+R, type command, Enter."""
+    import pyautogui
+    import pyperclip
+
+    try:
+        pyautogui.hotkey("win", "r")
+        time.sleep(0.2)
+
+        # Use paste for non-ASCII, typewrite for ASCII
+        if command.isascii():
+            pyautogui.typewrite(command, interval=0.02)
+        else:
+            pyperclip.copy(command)
+            time.sleep(0.05)
+            pyautogui.hotkey("ctrl", "v")
+
+        time.sleep(0.2)
+        pyautogui.press("enter")
+        time.sleep(0.5)
+
+        return {
+            "content": [{"type": "text", "text": f"Ran: {command}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }
+    except Exception as e:
+        return {
+            "content": [{"type": "text", "text": f"Run command failed: {e}"}],
+            "mouse_pos": None, "last_screenshot": None,
+        }

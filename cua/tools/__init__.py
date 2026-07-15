@@ -41,6 +41,7 @@ from cua.tools.uia import (
     UIA_CLICK_SCHEMA, execute_uia_click,
     UIA_SET_VALUE_SCHEMA, execute_uia_set_value,
     UIA_GET_TEXT_SCHEMA, execute_uia_get_text,
+    RUN_COMMAND_SCHEMA, execute_run_command,
 )
 from cua.tools.utility import (
     WAIT_SCHEMA, execute_wait,
@@ -92,6 +93,7 @@ TOOLS = [
     UIA_CLICK_SCHEMA,
     UIA_SET_VALUE_SCHEMA,
     UIA_GET_TEXT_SCHEMA,
+    RUN_COMMAND_SCHEMA,
     WAIT_SCHEMA,
     FILE_READ_SCHEMA,
     FILE_WRITE_SCHEMA,
@@ -256,6 +258,9 @@ def execute_tool(
 
     elif name == "uia_get_text":
         return execute_uia_get_text(args["name"])
+
+    elif name == "run_command":
+        return execute_run_command(args["command"])
 
     elif name == "wait":
         return execute_wait(args["seconds"])

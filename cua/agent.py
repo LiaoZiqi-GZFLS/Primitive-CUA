@@ -60,6 +60,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **uia_click(name)**: Click a UI control by name (partial match) in the foreground window. Uses UIA Invoke pattern — reliable for buttons, menus, tabs in native apps.
 - **uia_set_value(name, value)**: Set the value of an input/editable control by name. Uses UIA Value pattern for precise text entry in Office and native app fields. Supports Chinese.
 - **uia_get_text(name)**: Read text/value from a control by name. Use to read document content, cell values, status text.
+- **run_command(command)**: Open Windows Run dialog (Win+R), type a command, and press Enter. Use to open paths, launch executables, run shell commands.
 - **web_navigate(url)**: Open a URL directly in the built-in browser. Use this IMMEDIATELY for any web task — no need to open Chrome/Edge on the desktop first. Just call web_navigate("https://...") as your first action.
 - **web_get_content()**: Read the current page — headings, buttons, links, inputs, text. Use this instead of OCR/screenshot for web pages. Much more precise.
 - **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
