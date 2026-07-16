@@ -119,34 +119,47 @@ class TrajectoryRecorder:
 
 
 def _clean_trajectory(task: str, steps: list, client, model: str) -> list:
-    """LLM removes redundant/unnecessary steps from a trajectory before saving.
+    """LLM reviews trajectory screenshots, removes redundant steps.
 
     Returns cleaned steps list (name, args, screenshot_b64).
     """
     if not client or not model:
-        return [{"name": s["name"], "args": s["args"], "screenshot_b64": s["screenshot_b64"]}
+        return [{"name": s["name"], "args": s["args"], "screenshot_b64": s.get("screenshot_b64", "")}
                 for s in steps]
 
-    # Build a text summary of the steps for the LLM
-    trace = []
+    # Build content blocks with step descriptions + screenshots
+    content_blocks = [
+        {"type": "text", "text": (
+            f"Task: {task}\n\nBelow are trajectory steps with screenshots. "
+            f"Remove steps that are redundant (same state shown twice), "
+            f"or don't contribute to the task outcome. Keep the essential sequence. "
+            f"Output JSON: {{\"keep\": [1, 3, 5, 7]}} with 1-based step indices.\n"
+        )},
+    ]
+
     for i, s in enumerate(steps):
-        ss = "(no screenshot)" if not s.get("screenshot_b64") or len(s["screenshot_b64"]) < 100 else "(has screenshot)"
-        trace.append(f"  {i+1}. {s['name']} {json.dumps(s['args'], ensure_ascii=False)[:80]} {ss}")
+        desc = f"Step {i+1}: {s['name']} {json.dumps(s['args'], ensure_ascii=False)[:80]}"
+        if s.get("screenshot_b64") and len(s["screenshot_b64"]) > 100:
+            content_blocks.append({"type": "text", "text": desc})
+            content_blocks.append({"type": "image_url", "image_url": {"url": s["screenshot_b64"]}})
+        else:
+            content_blocks.append({"type": "text", "text": desc + " (no screenshot)"})
+
+    content_blocks.append({"type": "text", "text": "Which steps to keep?"})
 
     try:
         resp = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": (
-                    "You clean automation trajectories for replay. Remove steps that are "
-                    "redundant, unnecessary, or don't contribute to the task outcome. "
-                    "Keep only the essential sequence. Output JSON with key 'keep': "
-                    "array of step indices (1-based) to keep. Example: {\"keep\": [1, 3, 5, 7]}"
+                    "You clean automation trajectories by reviewing screenshots. "
+                    "Remove redundant steps: if two screenshots show the same state, "
+                    "keep only the latest. Remove unnecessary perception (repeated "
+                    "screenshot without action in between). Keep the minimal sequence "
+                    "that successfully completes the task. "
+                    "Output JSON: {\"keep\": [1-based indices]}"
                 )},
-                {"role": "user", "content": (
-                    f"Task: {task}\n\nSteps:\n" + "\n".join(trace) +
-                    "\n\nWhich steps should be kept for a clean replay trajectory?"
-                )},
+                {"role": "user", "content": content_blocks},
             ],
             response_format={"type": "json_object"},
             extra_body={"thinking": {"type": "disabled"}},
@@ -154,22 +167,19 @@ def _clean_trajectory(task: str, steps: list, client, model: str) -> list:
         result = _safe_json(resp.choices[0].message.content)
         keep = result.get("keep", [])
         if not keep:
-            return [{"name": s["name"], "args": s["args"], "screenshot_b64": s["screenshot_b64"]}
+            return [{"name": s["name"], "args": s["args"], "screenshot_b64": s.get("screenshot_b64", "")}
                     for s in steps]
 
-        # Build cleaned step list
         cleaned = []
         for i, s in enumerate(steps):
-            if (i + 1) in keep or not isinstance(keep[0], int):
+            if (i + 1) in keep:
                 cleaned.append({
                     "name": s["name"], "args": s["args"],
                     "screenshot_b64": s.get("screenshot_b64", ""),
                 })
-        if cleaned:
-            removed = len(steps) - len(cleaned)
-            if removed > 0:
-                print(f"  [replay] trajectory cleaned: removed {removed} redundant steps")
-            return cleaned
+        if cleaned and len(cleaned) < len(steps):
+            print(f"  [replay] trajectory cleaned: {len(steps)} -> {len(cleaned)} steps")
+        return cleaned if cleaned else [{"name": s["name"], "args": s["args"], "screenshot_b64": s.get("screenshot_b64", "")} for s in steps]
     except Exception:
         pass
 
