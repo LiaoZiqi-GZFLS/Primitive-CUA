@@ -873,6 +873,12 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         analyst_messages.append({
                             "role": "user",
                             "content": [
+                                {"type": "text", "text": (
+                                    f"Task: {task}\n"
+                                    + (f"Relevant past learnings:\n{similar_text}\n\n" if similar_text else "")
+                                    + f"Action just taken: {name}\n"
+                                    + "Analyze whether this action moved the task forward as expected."
+                                )},
                                 {"type": "text", "text": f"BEFORE {name}:"},
                                 {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
                                 {"type": "text", "text": f"BEFORE OCR: {before_ocr}"},
@@ -880,7 +886,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
                                 {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
                                 {"type": "text", "text": (
-                                    "You are analyzing whether this action succeeded. "
                                     "Compare BEFORE and AFTER screenshots and OCR. "
                                     "Output a concise summary in Chinese under 200 chars: "
                                     "what changed and whether the action had the expected effect."
