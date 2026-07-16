@@ -344,32 +344,29 @@ def delete_trajectory(traj_id: str):
 
 # --- Replay Judge ---
 
-def evaluate_replay(task: str, similar_text: str, current_screenshot_b64: str,
-                    client, model: str) -> dict:
-    """Ask a bare LLM whether trajectory replay is appropriate.
-
-    Returns {"can_replay": bool, "reasoning": str, "warnings": str}
-    """
+def evaluate_replay(task: str, similar_text: str, traj_tool_names: list[str],
+                    current_screenshot_b64: str, client, model: str) -> dict:
+    """Ask a bare LLM whether trajectory replay is appropriate."""
     try:
         resp = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": (
                     "You evaluate whether to replay a recorded automation trajectory. "
-                    "CRITICAL: reject if the trajectory is for a DIFFERENT application/domain "
-                    "(e.g. don't replay a Notepad trajectory for a WeChat task). "
-                    "can_replay=true ONLY if: the task and past success are the SAME kind of task "
-                    "(same app, same workflow), the current screen is compatible, "
-                    "and there are no blockers. "
-                    "Return JSON: {\"can_replay\": true/false, \"reasoning\": \"...\", \"warnings\": \"...\"}."
+                    "CRITICAL: reject if the trajectory tools/apps DON'T MATCH the task. "
+                    "E.g., if task is about WeChat but trajectory launches Notepad → reject. "
+                    "can_replay=true ONLY if: same app/domain, screen compatible, no blockers. "
+                    "Return JSON: {\"can_replay\": true/false, \"reasoning\": \"...\"}"
                 )},
                 {"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": current_screenshot_b64}},
                     {"type": "text", "text": (
                         f"Task: {task}\n\n"
-                        f"Similar past success:\n{similar_text}\n\n"
-                        f"Look at the current screenshot. Is replay appropriate?"
+                        f"Trajectory tools: {', '.join(traj_tool_names[:10])}\n\n"
+                        f"Similar past matches:\n{similar_text}\n\n"
+                        f"Current screenshot:"
                     )},
+                    {"type": "image_url", "image_url": {"url": current_screenshot_b64}},
+                    {"type": "text", "text": "Can this trajectory be replayed for this task?"},
                 ]},
             ],
             response_format={"type": "json_object"},
@@ -441,8 +438,9 @@ def attempt_replay(traj: dict, task: str, similar_text: str,
     current_b64 = _np_to_png_b64(
         downsample_for_vlm(current, mouse_pos, screen_w, screen_h)[0][..., [2, 1, 0]]
     )
-    print(f"  [replay] evaluating ({len(steps)} steps)...")
-    judge = evaluate_replay(task, similar_text, current_b64, client, model)
+    traj_tool_names = list(set(s["name"] for s in steps))
+    print(f"  [replay] evaluating ({len(steps)} steps, tools: {', '.join(traj_tool_names[:6])})...")
+    judge = evaluate_replay(task, similar_text, traj_tool_names, current_b64, client, model)
     if not judge.get("can_replay"):
         return {"replayed": False, "abort_reason": f"Judge: {judge.get('reasoning', 'no')}"}
 
