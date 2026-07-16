@@ -72,11 +72,68 @@ class TrajectoryRecorder:
 
 
 def load_trajectory(traj_id: str) -> dict | None:
-    """Load a saved trajectory."""
+    """Load a saved trajectory by ID."""
     path = TRAJ_DIR / f"{traj_id}.json"
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def find_trajectory(task_summary: str) -> dict | None:
+    """Find the most relevant trajectory by searching all saved ones via ChromaDB.
+
+    Returns the trajectory dict or None if no good match found.
+    """
+    if not TRAJ_DIR.exists():
+        return None
+
+    # Get all trajectory files
+    files = list(TRAJ_DIR.glob("*.json"))
+    if not files:
+        return None
+
+    # Build a simple in-memory index for this search
+    traj_docs = []
+    traj_map = {}
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                traj = json.load(fh)
+            task = traj.get("task", "")
+            if task:
+                traj_docs.append(task)
+                traj_map[task] = traj
+        except Exception:
+            continue
+
+    if not traj_docs:
+        return None
+
+    try:
+        from cua.learning import _get_skills_collection
+        # Use a temp collection for trajectory search
+        import chromadb
+        client = chromadb.Client(settings=chromadb.Settings(
+            chroma_db_impl="duckdb+parquet", persist_directory=":memory:"
+        ))
+        from chromadb.utils import embedding_functions
+        ef = embedding_functions.DefaultEmbeddingFunction()
+        col = client.create_collection("_traj_search", embedding_function=ef)
+        col.add(ids=[str(i) for i in range(len(traj_docs))], documents=traj_docs)
+
+        results = col.query(query_texts=[task_summary], n_results=1)
+        if results["ids"] and results["ids"][0] and results["distances"][0]:
+            sim = 1.0 - results["distances"][0][0]
+            if sim >= 0.4:  # moderate threshold
+                idx = int(results["ids"][0][0])
+                return traj_map[traj_docs[idx]]
+    except Exception:
+        pass
+
+    # Fallback: return the most recent trajectory
+    newest = max(files, key=lambda f: f.stat().st_mtime)
+    with open(newest, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
