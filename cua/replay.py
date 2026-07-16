@@ -62,8 +62,8 @@ class TrajectoryRecorder:
             rgb = downscaled[..., [2, 1, 0]]
             self.steps[-1]["screenshot_b64"] = _np_to_png_b64(rgb)
 
-    def save(self, task_summary: str = "") -> str | None:
-        """Save trajectory to disk. Replaces similar existing trajectories. Returns ID or None."""
+    def save(self, task_summary: str = "", client=None, model: str = "") -> str | None:
+        """Save trajectory. Uses LLM to decide: overwrite, modify, or abandon if similar exists."""
         if len(self.steps) < 2:
             return None
 
@@ -71,17 +71,36 @@ class TrajectoryRecorder:
             json.dumps([s["name"] for s in self.steps]).encode()
         ).hexdigest()[:12]
 
-        # Check for similar existing trajectory and replace it
+        # Check for similar existing trajectory
+        existing_id = None
+        existing_data = None
         if task_summary:
             try:
-                existing = _find_similar_traj(task_summary)
-                if existing:
-                    old_path = TRAJ_DIR / f"{existing}.json"
-                    if old_path.exists():
-                        old_path.unlink()
-                        print(f"  [replay] replaced old trajectory: {existing}")
+                existing_id = _find_similar_traj(task_summary)
+                if existing_id:
+                    existing_data = load_trajectory(existing_id)
             except Exception:
                 pass
+
+        # If similar exists, ask LLM what to do
+        action = "save_new"  # default
+        if existing_data and client and model:
+            action = _decide_trajectory_action(
+                self.task, task_summary, self.steps, existing_data, client, model
+            )
+            print(f"  [replay] trajectory decision: {action}")
+
+        # Handle old trajectory
+        if existing_id and action in ("replace", "modify"):
+            old_path = TRAJ_DIR / f"{existing_id}.json"
+            if old_path.exists():
+                if action == "replace":
+                    old_path.unlink()
+                else:  # modify — keep old as backup
+                    old_path.rename(TRAJ_DIR / f"{existing_id}.old.json")
+
+        if action == "abandon":
+            return None  # Keep existing, don't save new
 
         meta = {
             "task": self.task,
@@ -96,6 +115,47 @@ class TrajectoryRecorder:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
         return traj_id
+
+
+def _decide_trajectory_action(task: str, summary: str, new_steps: list,
+                               existing: dict, client, model: str) -> str:
+    """LLM decides: replace, modify, or abandon."""
+    try:
+        old_steps = json.dumps([
+            f"{s['name']}({json.dumps(s['args'], ensure_ascii=False)[:60]})"
+            for s in existing.get("steps", [])
+        ], ensure_ascii=False)
+        new_steps_str = json.dumps([
+            f"{s['name']}({json.dumps(s['args'], ensure_ascii=False)[:60]})"
+            for s in new_steps
+        ], ensure_ascii=False)
+
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": (
+                    "You manage replay trajectory versions. Given an existing trajectory "
+                    "and a new one from the same task, decide: replace (new is better), "
+                    "modify (merge best of both), or abandon (keep old). "
+                    "Output JSON: {\"action\": \"replace\"|\"modify\"|\"abandon\", \"reason\": \"...\"}"
+                )},
+                {"role": "user", "content": (
+                    f"Task: {task}\nSummary: {summary}\n\n"
+                    f"Old trajectory ({existing.get('task','')}):\n{old_steps}\n\n"
+                    f"New trajectory:\n{new_steps_str}\n\n"
+                    f"Decide."
+                )},
+            ],
+            response_format={"type": "json_object"},
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        result = _safe_json(resp.choices[0].message.content)
+        action = result.get("action", "save_new")
+        if action not in ("replace", "modify", "abandon"):
+            action = "save_new"
+        return action
+    except Exception:
+        return "save_new"
 
 
 def _find_similar_traj(task_summary: str) -> str | None:

@@ -625,7 +625,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     # Save trajectory for future replay
                     if result["_finish_report"].get("success"):
                         try:
-                            traj_id = recorder.save(task_summary=task_class.get("summary", ""))
+                            traj_id = recorder.save(
+                                task_summary=task_class.get("summary", ""),
+                                client=client, model=model,
+                            )
                             if traj_id:
                                 print(f"  [replay] trajectory saved: {traj_id}")
                         except Exception:
