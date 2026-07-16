@@ -49,6 +49,7 @@ from cua.tools.utility import (
     FILE_READ_SCHEMA, execute_file_read,
     FILE_WRITE_SCHEMA, execute_file_write,
     NOTE_SCHEMA, execute_note,
+    DELETE_TRAJECTORY_SCHEMA, execute_delete_trajectory,
 )
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.subagents.draft_content import DRAFT_CONTENT_SCHEMA, execute_draft_content
@@ -104,6 +105,7 @@ TOOLS = [
     FILE_READ_SCHEMA,
     FILE_WRITE_SCHEMA,
     NOTE_SCHEMA,
+    DELETE_TRAJECTORY_SCHEMA,
     MEMORY_SCHEMA,
     RETHINK_SCHEMA,
     DRAFT_CONTENT_SCHEMA,
@@ -290,6 +292,9 @@ def execute_tool(
 
     elif name == "note":
         return execute_note(args.get("text", ""))
+
+    elif name == "delete_trajectory":
+        return execute_delete_trajectory(args["traj_id"])
 
     elif name == "request_human_help":
         return execute_human_help(args["request"])

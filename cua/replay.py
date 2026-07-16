@@ -62,8 +62,8 @@ class TrajectoryRecorder:
             rgb = downscaled[..., [2, 1, 0]]
             self.steps[-1]["screenshot_b64"] = _np_to_png_b64(rgb)
 
-    def save(self) -> str | None:
-        """Save trajectory to disk. Returns trajectory ID or None."""
+    def save(self, task_summary: str = "") -> str | None:
+        """Save trajectory to disk. Replaces similar existing trajectories. Returns ID or None."""
         if len(self.steps) < 2:
             return None
 
@@ -71,9 +71,21 @@ class TrajectoryRecorder:
             json.dumps([s["name"] for s in self.steps]).encode()
         ).hexdigest()[:12]
 
-        # Save metadata (no screenshots in JSON — they're stored inline as b64)
+        # Check for similar existing trajectory and replace it
+        if task_summary:
+            try:
+                existing = _find_similar_traj(task_summary)
+                if existing:
+                    old_path = TRAJ_DIR / f"{existing}.json"
+                    if old_path.exists():
+                        old_path.unlink()
+                        print(f"  [replay] replaced old trajectory: {existing}")
+            except Exception:
+                pass
+
         meta = {
             "task": self.task,
+            "summary": task_summary,
             "steps": [
                 {"name": s["name"], "args": s["args"], "screenshot_b64": s["screenshot_b64"]}
                 for s in self.steps
@@ -84,6 +96,47 @@ class TrajectoryRecorder:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
         return traj_id
+
+
+def _find_similar_traj(task_summary: str) -> str | None:
+    """Find the most similar existing trajectory ID. Returns None if no good match."""
+    files = list(TRAJ_DIR.glob("*.json"))
+    if not files:
+        return None
+
+    docs = {}
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                traj = json.load(fh)
+            s = traj.get("summary", traj.get("task", ""))
+            if s:
+                docs[f.stem] = s
+        except Exception:
+            continue
+
+    if not docs:
+        return None
+
+    try:
+        import chromadb
+        from chromadb.utils import embedding_functions
+        client = chromadb.Client(settings=chromadb.Settings(
+            chroma_db_impl="duckdb+parquet", persist_directory=":memory:"
+        ))
+        ef = embedding_functions.DefaultEmbeddingFunction()
+        col = client.create_collection("_traj_replace", embedding_function=ef)
+        ids = list(docs.keys())
+        col.add(ids=ids, documents=[docs[k] for k in ids])
+
+        results = col.query(query_texts=[task_summary], n_results=1)
+        if results["ids"] and results["ids"][0] and results["distances"][0]:
+            sim = 1.0 - results["distances"][0][0]
+            if sim >= 0.5:
+                return results["ids"][0][0]
+    except Exception:
+        pass
+    return None
 
 
 def load_trajectory(traj_id: str) -> dict | None:
