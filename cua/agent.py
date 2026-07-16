@@ -5,6 +5,7 @@ from typing import Any
 
 import mss
 import numpy as np
+import openai
 from openai import OpenAI
 
 from cua.config import load_config
@@ -366,6 +367,25 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
                 break
 
         keep.insert(insert_pos, compressed_msg)
+
+        # Strip orphaned tool_calls from assistant messages (their tool results
+        # may have been compressed away, causing "tool_call_id not found" errors)
+        for i, msg in enumerate(keep):
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                valid_tool_ids = {
+                    m["tool_call_id"]
+                    for m in keep
+                    if m["role"] == "tool" and "tool_call_id" in m
+                }
+                msg["tool_calls"] = [
+                    tc for tc in msg["tool_calls"]
+                    if tc.get("id") in valid_tool_ids
+                ]
+                if not msg["tool_calls"]:
+                    del msg["tool_calls"]
+                    if not msg.get("content"):
+                        msg["content"] = ""
+
         messages[:] = keep
 
         print(f"  [compress] context reduced from {len(to_compress) + len(keep)} to {len(messages)} messages")
