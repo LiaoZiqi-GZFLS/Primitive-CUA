@@ -264,12 +264,6 @@ def attempt_replay(traj: dict, task: str, similar_text: str,
         name = step["name"]
         args = step["args"]
 
-        # Skip perception-only steps during replay
-        from cua.agent import PERCEPTION_TOOLS
-        if name in PERCEPTION_TOOLS:
-            tool_log.append(f"[replay-skip] {name}")
-            continue
-
         print(f"  [replay] step {i+1}/{len(steps)}: {name} {json.dumps(args, ensure_ascii=False)[:80]}")
 
         # Execute the step
