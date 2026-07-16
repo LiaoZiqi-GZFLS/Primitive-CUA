@@ -323,7 +323,7 @@ def find_trajectory(task_summary: str) -> dict | None:
         results = col.query(query_texts=[task_summary], n_results=1)
         if results["ids"] and results["ids"][0] and results["distances"][0]:
             sim = 1.0 - results["distances"][0][0]
-            if sim >= 0.4:  # moderate threshold
+            if sim >= 0.6:  # high threshold — only genuinely similar tasks
                 idx = int(results["ids"][0][0])
                 return traj_map[traj_docs[idx]]
     except Exception:
@@ -356,10 +356,12 @@ def evaluate_replay(task: str, similar_text: str, current_screenshot_b64: str,
             messages=[
                 {"role": "system", "content": (
                     "You evaluate whether to replay a recorded automation trajectory. "
-                    "Return JSON: {\"can_replay\": true/false, \"reasoning\": \"...\", \"warnings\": \"...\"}. "
-                    "can_replay=true only if: the task is highly similar to past success, "
-                    "the current screen state looks compatible with the first step, "
-                    "and there are no obvious blockers (dialogs, login screens, different app open)."
+                    "CRITICAL: reject if the trajectory is for a DIFFERENT application/domain "
+                    "(e.g. don't replay a Notepad trajectory for a WeChat task). "
+                    "can_replay=true ONLY if: the task and past success are the SAME kind of task "
+                    "(same app, same workflow), the current screen is compatible, "
+                    "and there are no blockers. "
+                    "Return JSON: {\"can_replay\": true/false, \"reasoning\": \"...\", \"warnings\": \"...\"}."
                 )},
                 {"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": current_screenshot_b64}},
