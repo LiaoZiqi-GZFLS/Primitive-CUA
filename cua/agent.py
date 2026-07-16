@@ -368,28 +368,32 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
 
         keep.insert(insert_pos, compressed_msg)
 
-        # Strip ALL tool_calls from assistant messages within the kept range.
-        # After compression, tool results may be removed, causing orphaned
-        # tool_call_ids that trigger Kimi API "tool_call_id not found" errors.
-        # Converting orphaned assistant tool_calls to plain text messages.
-        for i, msg in enumerate(keep):
+        # After compression, clean up: strip tool_calls + tool messages.
+        # Assistant tool_calls may reference tool messages that were compressed away.
+        valid_tool_ids = {m.get("tool_call_id", "") for m in keep if m["role"] == "tool"}
+        cleaned_keep = []
+        for msg in keep:
             if msg["role"] == "assistant" and "tool_calls" in msg:
-                valid_tool_ids = {
-                    m.get("tool_call_id", "")
-                    for m in keep
-                    if m["role"] == "tool"
-                }
-                valid_tc = [tc for tc in msg["tool_calls"] if tc.get("id") in valid_tool_ids]
-                if len(valid_tc) < len(msg["tool_calls"]):
-                    # Some tool_calls became orphaned — convert to plain text
-                    names = [tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"]]
-                    if not msg.get("content"):
-                        msg["content"] = f"[Compressed: removed orphaned tool calls: {', '.join(names)}]"
+                # Keep only tool_calls that have matching tool messages
+                msg["tool_calls"] = [tc for tc in msg["tool_calls"] if tc.get("id") in valid_tool_ids]
+                if not msg["tool_calls"]:
                     del msg["tool_calls"]
-                else:
-                    msg["tool_calls"] = valid_tc
+                    if not msg.get("content"):
+                        msg["content"] = ""
+            if msg["role"] == "tool":
+                # Remove tool messages whose tool_call_id no longer has a matching
+                # assistant tool_call in keep
+                tc_id = msg.get("tool_call_id", "")
+                has_assistant = any(
+                    m["role"] == "assistant" and "tool_calls" in m
+                    and any(tc.get("id") == tc_id for tc in m["tool_calls"])
+                    for m in keep
+                )
+                if not has_assistant:
+                    continue  # Skip orphaned tool message
+            cleaned_keep.append(msg)
 
-        messages[:] = keep
+        messages[:] = cleaned_keep
 
         print(f"  [compress] context reduced from {len(to_compress) + len(keep)} to {len(messages)} messages")
 
