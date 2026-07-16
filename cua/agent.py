@@ -410,7 +410,57 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
     # Inject similar past learnings into first think()
     from cua.tools.think import set_think_context
-    set_think_context(task_class.get("similar", ""))
+    similar_text = task_class.get("similar", "")
+    set_think_context(similar_text)
+
+    # Check for trajectory replay opportunity
+    _replay_result = None
+    if similar_text and client is not None:
+        from cua.replay import attempt_replay, load_trajectory, SIMILARITY_REPLAY_THRESHOLD
+        # Try to find a matching trajectory
+        for line in similar_text.split("\n"):
+            if "]" in line and "%" in line:
+                try:
+                    sim_pct = line.split("[")[1].split("%")[0]
+                    if int(sim_pct) >= int(SIMILARITY_REPLAY_THRESHOLD * 100):
+                        # Try to load trajectory by skill name
+                        skill_name = line.split("] ")[1].split(":")[0].strip().lower().replace(" ", "-")
+                        traj = load_trajectory(skill_name)
+                        if traj:
+                            print(f"  [replay] attempting replay of trajectory '{skill_name}'")
+                            _replay_result = attempt_replay(
+                                traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
+                                client, model
+                            )
+                            if _replay_result.get("replayed"):
+                                # Replay succeeded — return completion
+                                return {
+                                    "success": True,
+                                    "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
+                                    "steps": _replay_result.get("tool_log", []),
+                                    "tokens": token_usage,
+                                    "_tool_calls_log": _replay_result.get("tool_log", []),
+                                }
+                            else:
+                                print(f"  [replay] failed at step {_replay_result.get('steps_done', 0)}: {_replay_result.get('abort_reason', '')}")
+                                # Inject replay failure context into messages
+                                messages.append({
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": (
+                                            f"Trajectory replay was attempted but failed at step "
+                                            f"{_replay_result.get('steps_done', 0)}/{_replay_result.get('steps_total', 0)}.\n"
+                                            f"Reason: {_replay_result.get('abort_reason', '')}\n"
+                                            f"Steps executed so far:\n" +
+                                            "\n".join(_replay_result.get("tool_log", [])[-10:]) +
+                                            f"\n\nAgent taking over. Please continue from here. "
+                                            f"Assess the current state and complete the task."
+                                        )},
+                                    ],
+                                })
+                        break
+                except (ValueError, IndexError):
+                    pass
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0   # how many action-rounds have been compressed so far
@@ -418,6 +468,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
     from cua.tools.utility import clear_notes
     clear_notes()
+
+    # Start trajectory recorder for potential replay
+    from cua.replay import TrajectoryRecorder
+    recorder = TrajectoryRecorder(task)
 
     with mss.mss() as sct:
         monitor = sct.monitors[1]
@@ -545,6 +599,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 print(f"  [{name}] {args_str}")
                 _current_tool_log.append(f"[{name}] {args_str}")
 
+                # Record step for future trajectory replay
+                recorder.record_step(name, args, img, screen_w, screen_h, mouse_pos)
+
                 # Save before-screenshot for verify step
                 img_before = img.copy() if name in VERIFY_TOOLS else None
 
@@ -575,6 +632,16 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 if name == "finish" and "_finish_report" in result:
                     result["_finish_report"]["tokens"] = token_usage
                     result["_finish_report"]["_tool_calls_log"] = _current_tool_log
+
+                    # Save trajectory for future replay
+                    if result["_finish_report"].get("success"):
+                        try:
+                            traj_id = recorder.save()
+                            if traj_id:
+                                print(f"  [replay] trajectory saved: {traj_id}")
+                        except Exception:
+                            pass  # Best-effort
+
                     return result["_finish_report"]
 
                 content_items = result["content"]
