@@ -141,7 +141,7 @@ def search_knowledge(query: str, top_n: int = 3) -> str:
         lines = []
         for i, (kid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
             sim = 1.0 - dist
-            if sim < 0.4:
+            if sim < 0.3:
                 continue
             doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
             lines.append(f"- [{sim:.0%}] {kid}: {doc[:150]}")

@@ -892,9 +892,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                     "Compare BEFORE and AFTER screenshots and OCR. "
                                     "Output a concise summary in Chinese under 200 chars: "
                                     "what changed and whether the action had the expected effect.\n"
-                                    "Also output a short English phrase (under 80 chars) describing "
-                                    "the current action and its result — this will be used to search "
-                                    "a knowledge base. Format your response as JSON:\n"
+                                    "Also output a short English phrase (under 80 chars) for knowledge "
+                                    "base search. Include the specific application name, UI element type, "
+                                    "and action attempted. Be specific — don't generalize.\n"
+                                    "Example: 'WeChat service account chat keyboard icon button not found'\n"
+                                    "Format as JSON: "
                                     '{"summary": "中文总结", "en_query": "English search phrase"}'
                                 )},
                             ],
