@@ -246,8 +246,17 @@ def _repair_json(text: str) -> dict:
         if text.endswith('"') or text.endswith("'"):
             text += "}"
         else:
-            # Truncated mid-value — cut back to last complete key-value pair
-            text = text[:text.rfind('"') + 1] + "}"
+            # Truncated mid-value — cut back to last complete pair
+            last_pair_end = text.rfind('", "')
+            if last_pair_end > 0:
+                text = text[:last_pair_end + 3] + '}'
+            else:
+                # Single key-value, try to close it
+                colon = text.find('": "')
+                if colon > 0:
+                    text = text[:colon + 4] + 'truncated"}'
+                else:
+                    text += '"}'
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -433,8 +442,9 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
 
         try:
             result = json.loads(content)
-        except json.JSONDecodeError:
-            # Try to repair truncated JSON
+        except json.JSONDecodeError as e:
+            print(f"  [reflection] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
+            print(f"  [reflection] raw preview: {content[:120]}...")
             result = _repair_json(content)
 
         conn = _get_db()
@@ -495,7 +505,8 @@ def settle_pending(client, model: str):
                 raise ValueError("empty settlement response")
             try:
                 verdict = json.loads(content)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                print(f"  [settle] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
                 verdict = _repair_json(content)
 
             if verdict.get("completed"):
