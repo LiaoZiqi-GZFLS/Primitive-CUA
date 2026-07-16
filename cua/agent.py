@@ -368,23 +368,26 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
 
         keep.insert(insert_pos, compressed_msg)
 
-        # Strip orphaned tool_calls from assistant messages (their tool results
-        # may have been compressed away, causing "tool_call_id not found" errors)
+        # Strip ALL tool_calls from assistant messages within the kept range.
+        # After compression, tool results may be removed, causing orphaned
+        # tool_call_ids that trigger Kimi API "tool_call_id not found" errors.
+        # Converting orphaned assistant tool_calls to plain text messages.
         for i, msg in enumerate(keep):
             if msg["role"] == "assistant" and "tool_calls" in msg:
                 valid_tool_ids = {
-                    m["tool_call_id"]
+                    m.get("tool_call_id", "")
                     for m in keep
-                    if m["role"] == "tool" and "tool_call_id" in m
+                    if m["role"] == "tool"
                 }
-                msg["tool_calls"] = [
-                    tc for tc in msg["tool_calls"]
-                    if tc.get("id") in valid_tool_ids
-                ]
-                if not msg["tool_calls"]:
-                    del msg["tool_calls"]
+                valid_tc = [tc for tc in msg["tool_calls"] if tc.get("id") in valid_tool_ids]
+                if len(valid_tc) < len(msg["tool_calls"]):
+                    # Some tool_calls became orphaned — convert to plain text
+                    names = [tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"]]
                     if not msg.get("content"):
-                        msg["content"] = ""
+                        msg["content"] = f"[Compressed: removed orphaned tool calls: {', '.join(names)}]"
+                    del msg["tool_calls"]
+                else:
+                    msg["tool_calls"] = valid_tc
 
         messages[:] = keep
 
