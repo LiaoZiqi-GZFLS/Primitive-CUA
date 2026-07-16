@@ -432,6 +432,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Virtual mouse starts at center
         mouse_pos = (0.5, 0.5)
 
+        # Initialize messages early (needed by replay failure handler)
+        learnings_text = get_learnings_prompt()
+        system_content = SYSTEM_PROMPT + learnings_text
+        messages = [{"role": "system", "content": system_content}]
+
         # Check for trajectory replay opportunity
         _replay_result = None
         if similar_text and client is not None:
@@ -477,24 +482,21 @@ def run_task(task: str, config: dict | None = None) -> dict:
         # Tool call log (module-level for Ctrl+C recovery)
         _current_tool_log.clear()
 
-        # Main agent messages (startup recall hint)
-        messages = [
-            {"role": "system", "content": system_content},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": (
-                        f"Task: {task}\n"
-                        f"Tip: recall past learnings with memory(action='recall'). "
-                        f"Save new findings with memory(action='save') during the task."
-                    )},
-                ],
-            },
-            {
-                "role": "user",
-                "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
-            },
-        ]
+        # Add startup recall hint to existing messages
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": (
+                    f"Task: {task}\n"
+                    f"Tip: recall past learnings with memory(action='recall'). "
+                    f"Save new findings with memory(action='save') during the task."
+                )},
+            ],
+        })
+        messages.append({
+            "role": "user",
+            "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
+        })
 
         for iteration in range(max_iterations):
             # Near the limit, inject a strong reminder
