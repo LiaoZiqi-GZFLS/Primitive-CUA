@@ -623,7 +623,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     result["_finish_report"]["_tool_calls_log"] = _current_tool_log
 
                     # Save trajectory for future replay
-                    if result["_finish_report"].get("success"):
+                    success = result["_finish_report"].get("success", False)
+                    action_steps = sum(1 for s in recorder.steps if s.get("screenshot_b64") and len(s["screenshot_b64"]) > 100)
+                    print(f"  [replay] finished: success={success}, action_steps={action_steps}/{len(recorder.steps)}")
+                    if success:
                         try:
                             traj_id = recorder.save(
                                 task_summary=task_class.get("summary", ""),
@@ -632,7 +635,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             if traj_id:
                                 print(f"  [replay] trajectory saved: {traj_id}")
                             else:
-                                print(f"  [replay] trajectory skipped: <2 action steps in recorder")
+                                print(f"  [replay] trajectory skipped: need >=1 action step with screenshot")
                         except Exception as e:
                             print(f"  [replay] trajectory save failed: {e}")
 
