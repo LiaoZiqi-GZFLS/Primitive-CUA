@@ -183,7 +183,6 @@ def evaluate_replay(task: str, similar_text: str, current_screenshot_b64: str,
                 ]},
             ],
             response_format={"type": "json_object"},
-            max_tokens=200,
             extra_body={"thinking": {"type": "disabled"}},
         )
         return _safe_json(resp.choices[0].message.content)

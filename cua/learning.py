@@ -213,7 +213,6 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
                 )},
             ],
             response_format={"type": "json_object"},
-            max_tokens=400,
             extra_body={"thinking": {"type": "disabled"}},
         )
         content = resp.choices[0].message.content
