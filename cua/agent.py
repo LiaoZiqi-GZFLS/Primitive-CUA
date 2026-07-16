@@ -413,41 +413,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
     similar_text = task_class.get("similar", "")
     set_think_context(similar_text)
 
-    # Check for trajectory replay opportunity
-    _replay_result = None
-    if similar_text and client is not None:
-        from cua.replay import attempt_replay, find_trajectory, SIMILARITY_REPLAY_THRESHOLD
-        print(f"  [replay] checking replay viability (threshold={int(SIMILARITY_REPLAY_THRESHOLD*100)}%)...")
-        traj = find_trajectory(task_class.get("summary", task))
-        if traj:
-            print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
-            _replay_result = attempt_replay(
-                traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
-                client, model
-            )
-            if _replay_result.get("replayed"):
-                return {
-                    "success": True,
-                    "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
-                    "steps": _replay_result.get("tool_log", []),
-                    "tokens": token_usage,
-                    "_tool_calls_log": _replay_result.get("tool_log", []),
-                }
-            else:
-                print(f"  [replay] failed: {_replay_result.get('abort_reason', '')[:80]}")
-                if _replay_result.get("steps_done", 0) > 0:
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "text", "text": (
-                            f"Trajectory replay was attempted but failed at step "
-                            f"{_replay_result['steps_done']}/{_replay_result['steps_total']}.\n"
-                            f"Reason: {_replay_result.get('abort_reason', '')}\n"
-                            f"Agent taking over. Assess the current state and complete the task."
-                        )}],
-                    })
-        else:
-            print(f"  [replay] no matching trajectory found")
-
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0   # how many action-rounds have been compressed so far
     _total_action_count = 0  # cumulative count, never decremented by cleanup
@@ -466,6 +431,41 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
         # Virtual mouse starts at center
         mouse_pos = (0.5, 0.5)
+
+        # Check for trajectory replay opportunity
+        _replay_result = None
+        if similar_text and client is not None:
+            from cua.replay import attempt_replay, find_trajectory, SIMILARITY_REPLAY_THRESHOLD
+            print(f"  [replay] checking replay viability (threshold={int(SIMILARITY_REPLAY_THRESHOLD*100)}%)...")
+            traj = find_trajectory(task_class.get("summary", task))
+            if traj:
+                print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
+                _replay_result = attempt_replay(
+                    traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
+                    client, model
+                )
+                if _replay_result.get("replayed"):
+                    return {
+                        "success": True,
+                        "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
+                        "steps": _replay_result.get("tool_log", []),
+                        "tokens": token_usage,
+                        "_tool_calls_log": _replay_result.get("tool_log", []),
+                    }
+                else:
+                    print(f"  [replay] failed: {_replay_result.get('abort_reason', '')[:80]}")
+                    if _replay_result.get("steps_done", 0) > 0:
+                        messages.append({
+                            "role": "user",
+                            "content": [{"type": "text", "text": (
+                                f"Trajectory replay was attempted but failed at step "
+                                f"{_replay_result['steps_done']}/{_replay_result['steps_total']}.\n"
+                                f"Reason: {_replay_result.get('abort_reason', '')}\n"
+                                f"Agent taking over. Assess the current state and complete the task."
+                            )}],
+                        })
+            else:
+                print(f"  [replay] no matching trajectory found")
 
         # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
