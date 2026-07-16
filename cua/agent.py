@@ -12,7 +12,7 @@ from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import build_tools
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
-from cua.learning import get_learnings_prompt
+from cua.learning import get_learnings_prompt, index_knowledge
 from cua.overlay import draw_cursor
 
 # Module-level tool log for Ctrl+C recovery
@@ -425,6 +425,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
     # Create client first (needed for LLM classification)
     client = OpenAI(api_key=api_key, base_url=base_url)
+
+    # Index knowledge base on startup
+    index_knowledge()
 
     # Dynamically load tools based on LLM task classification
     tool_names, tool_info, task_class = build_tools(task, client, model)
@@ -888,7 +891,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 {"type": "text", "text": (
                                     "Compare BEFORE and AFTER screenshots and OCR. "
                                     "Output a concise summary in Chinese under 200 chars: "
-                                    "what changed and whether the action had the expected effect."
+                                    "what changed and whether the action had the expected effect.\n"
+                                    "Also output a short English phrase (under 80 chars) describing "
+                                    "the current action and its result — this will be used to search "
+                                    "a knowledge base. Format your response as JSON:\n"
+                                    '{"summary": "中文总结", "en_query": "English search phrase"}'
                                 )},
                             ],
                         })
@@ -898,11 +905,27 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             max_tokens=256,
                             extra_body={"thinking": {"type": "disabled"}},
                         )
-                        delta_summary = analysis.choices[0].message.content or ""
+                        raw_analyst = analysis.choices[0].message.content or ""
                         if hasattr(analysis, "usage") and analysis.usage:
                             token_usage["prompt"] += analysis.usage.prompt_tokens or 0
                             token_usage["completion"] += analysis.usage.completion_tokens or 0
                             token_usage["total"] += analysis.usage.total_tokens or 0
+
+                        # Parse analyst JSON for summary + knowledge search
+                        delta_summary = raw_analyst
+                        knowledge_hits = ""
+                        try:
+                            parsed = json.loads(raw_analyst)
+                            delta_summary = parsed.get("summary", raw_analyst)
+                            en_query = parsed.get("en_query", "")
+                            if en_query:
+                                from cua.learning import search_knowledge
+                                knowledge_hits = search_knowledge(en_query)
+                                if knowledge_hits:
+                                    print(f"  [verify] knowledge: {len(knowledge_hits.split(chr(10)))} hits")
+                        except (json.JSONDecodeError, Exception):
+                            pass  # Use raw text as summary
+
                         print(f"  [verify] analyst: {delta_summary[:120]}")
                     except Exception as e:
                         print(f"  [verify] analyst failed: {e}")
@@ -916,15 +939,14 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
                     ]
                     if delta_summary:
-                        verify_content.append({
-                            "type": "text",
-                            "text": (
-                                f"Change analysis (from independent analyst): {delta_summary}\n\n"
-                                f"You just called {name}. Compare the BEFORE/AFTER screenshots "
-                                f"to verify the action's effect. Then reflect on what to do next.\n\n"
-                                f"{THINK_PROMPT}"
-                            ),
-                        })
+                        text = (
+                            f"Change analysis (from independent analyst): {delta_summary}\n\n"
+                            + (f"Related knowledge from manual KB:\n{knowledge_hits}\n\n" if knowledge_hits else "")
+                            + f"You just called {name}. Compare the BEFORE/AFTER screenshots "
+                            + f"to verify the action's effect. Then reflect on what to do next.\n\n"
+                            + f"{THINK_PROMPT}"
+                        )
+                        verify_content.append({"type": "text", "text": text})
                     else:
                         verify_content.append({
                             "type": "text",

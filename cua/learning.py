@@ -18,6 +18,7 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "memory.db"
 SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
+KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
 
 # Settlement retry counter
 _settle_retries: dict[int, int] = {}
@@ -25,6 +26,7 @@ _settle_retries: dict[int, int] = {}
 # ChromaDB for skill similarity search (lazy init)
 _chroma_client = None
 _skills_collection = None
+_knowledge_collection = None
 _SIMILARITY_THRESHOLD = 0.85
 
 
@@ -66,13 +68,87 @@ def _index_skill(name: str, description: str):
     """Add a skill to the ChromaDB vector index."""
     try:
         col = _get_skills_collection()
-        # Remove old entry if exists
         existing = col.get(ids=[name])
         if existing["ids"]:
             col.delete(ids=[name])
         col.add(ids=[name], documents=[description])
     except Exception:
         pass  # Best-effort
+
+
+# --- Knowledge base (manual .md files) ---
+
+def _get_knowledge_collection():
+    """Get or create ChromaDB knowledge collection."""
+    global _chroma_client, _knowledge_collection
+    if _knowledge_collection is None:
+        import chromadb
+        from chromadb.utils import embedding_functions
+        _ensure_dirs()
+        if _chroma_client is None:
+            _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
+        ef = embedding_functions.ONNXMiniLM_L6_V2(
+            preferred_providers=["CPUExecutionProvider"]
+        )
+        _knowledge_collection = _chroma_client.get_or_create_collection(
+            name="cua_knowledge",
+            embedding_function=ef,
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _knowledge_collection
+
+
+def index_knowledge():
+    """Index all .md files in the knowledge directory. Call on startup."""
+    if not KNOWLEDGE_DIR.exists():
+        return
+
+    files = list(KNOWLEDGE_DIR.glob("*.md"))
+    if not files:
+        return
+
+    try:
+        col = _get_knowledge_collection()
+        indexed = set(col.get()["ids"]) if col.count() > 0 else set()
+
+        for f in files:
+            name = f.stem
+            if name in indexed:
+                continue  # Already indexed
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+                # Use first ~500 chars as the document for embedding
+                doc = content[:500]
+                col.add(ids=[name], documents=[doc])
+                print(f"  [knowledge] indexed: {name}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def search_knowledge(query: str, top_n: int = 3) -> str:
+    """Search the knowledge base for relevant entries. Returns formatted text."""
+    try:
+        col = _get_knowledge_collection()
+        if col.count() == 0:
+            return ""
+        results = col.query(query_texts=[query], n_results=top_n)
+        if not results["ids"] or not results["ids"][0]:
+            return ""
+
+        lines = []
+        for i, (kid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
+            sim = 1.0 - dist
+            if sim < 0.4:
+                continue
+            doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
+            lines.append(f"- [{sim:.0%}] {kid}: {doc[:150]}")
+
+        return "\n".join(lines) if lines else ""
+    except Exception:
+        return ""
 
 
 def _get_learning_config() -> dict:
