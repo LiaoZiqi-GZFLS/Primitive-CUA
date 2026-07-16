@@ -460,6 +460,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 else:
                     print(f"  [replay] failed: {_replay_result.get('abort_reason', '')[:80]}")
                     if _replay_result.get("steps_done", 0) > 0:
+                        # Pre-populate recorder with successful replay steps
+                        for step in traj["steps"][:_replay_result["steps_done"]]:
+                            recorder.steps.append(step)
                         messages.append({
                             "role": "user",
                             "content": [{"type": "text", "text": (
