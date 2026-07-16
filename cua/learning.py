@@ -230,23 +230,49 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
 
 
 def _repair_json(text: str) -> dict:
-    """Try to salvage malformed JSON by finding the last valid key-value pair."""
-    # Try to close unterminated strings by adding quotes
-    if text.endswith('"') or text.endswith("'"):
-        text += "}"
-    # Find last valid pair
-    last_comma = text.rfind('",')
-    if last_comma > 0:
-        text = text[:last_comma + 2] + '}'
-    # Ensure closing brace
-    if not text.rstrip().endswith("}"):
-        text = text.rstrip() + '}'
+    """Try to salvage malformed/truncated JSON."""
+    text = text.strip()
+    if not text.startswith("{"):
+        return {"completed": False, "summary": "Invalid JSON", "reason": text[:200]}
+
+    # Try direct parse first
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Last resort: return a placeholder
-    return {"completed": False, "summary": "JSON parse failed", "reason": "JSON parse failed, raw: " + text[:200], "fix": "check trace"}
+
+    # Strategy 1: close unterminated string + add closing brace
+    if not text.endswith("}"):
+        if text.endswith('"') or text.endswith("'"):
+            text += "}"
+        else:
+            # Truncated mid-value — cut back to last complete key-value pair
+            text = text[:text.rfind('"') + 1] + "}"
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: cut to last comma and close
+    last_comma = text.rfind('",')
+    if last_comma > 10:
+        text = text[:last_comma + 2] + '}'
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: extract just the first key-value pair
+    first_colon = text.find('": "')
+    if first_colon > 0:
+        after = text[first_colon + 4:]
+        first_end = after.find('"')
+        if first_end > 0:
+            key = text[2:first_colon]
+            val = after[:first_end]
+            return {key.strip('"'): val, "summary": "truncated JSON, partial recovery"}
+
+    return {"completed": False, "summary": "JSON repair failed", "reason": text[:200]}
 
 
 def _template_skill(task: str, steps: list[str], tool_log: list[str]) -> dict:

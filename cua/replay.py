@@ -24,20 +24,13 @@ SIMILARITY_REPLAY_THRESHOLD = 0.70  # Only consider replay above this similarity
 
 
 def _safe_json(content: str) -> dict:
-    """Parse JSON safely, with truncation repair fallback."""
-    if not content:
-        return {}
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        content = content.rstrip()
-        last_quote = content.rfind('"')
-        if last_quote > 0 and not content.endswith("}"):
-            content = content[:last_quote + 1] + '}'
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            return {}
+    """Parse JSON safely, delegating to learning._repair_json."""
+    from cua.learning import _repair_json
+    result = _repair_json(content)
+    # Normalize keys for replay use
+    if "reason" in result and "reasoning" not in result:
+        result["reasoning"] = result["reason"]
+    return result
 
 
 # --- Recording ---
