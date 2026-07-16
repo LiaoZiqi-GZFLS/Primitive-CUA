@@ -23,6 +23,23 @@ TRAJ_DIR.mkdir(parents=True, exist_ok=True)
 SIMILARITY_REPLAY_THRESHOLD = 0.70  # Only consider replay above this similarity
 
 
+def _safe_json(content: str) -> dict:
+    """Parse JSON safely, with truncation repair fallback."""
+    if not content:
+        return {}
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        content = content.rstrip()
+        last_quote = content.rfind('"')
+        if last_quote > 0 and not content.endswith("}"):
+            content = content[:last_quote + 1] + '}'
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return {}
+
+
 # --- Recording ---
 
 class TrajectoryRecorder:
@@ -176,8 +193,7 @@ def evaluate_replay(task: str, similar_text: str, current_screenshot_b64: str,
             max_tokens=200,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        import json
-        return json.loads(resp.choices[0].message.content)
+        return _safe_json(resp.choices[0].message.content)
     except Exception as e:
         return {"can_replay": False, "reasoning": f"Judge error: {e}", "warnings": ""}
 
@@ -217,8 +233,7 @@ def verify_step(step: dict, current_screenshot: np.ndarray,
             max_tokens=150,
             extra_body={"thinking": {"type": "disabled"}},
         )
-        import json
-        return json.loads(resp.choices[0].message.content)
+        return _safe_json(resp.choices[0].message.content)
     except Exception as e:
         return {"ok": False, "reason": f"Verify error: {e}"}
 
