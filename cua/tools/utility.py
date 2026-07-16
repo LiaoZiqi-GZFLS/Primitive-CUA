@@ -180,30 +180,3 @@ def execute_note(text: str = "") -> dict:
             "mouse_pos": None,
             "last_screenshot": None,
         }
-
-
-# --- Trajectory management ---
-
-DELETE_TRAJECTORY_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "delete_trajectory",
-        "description": "Delete a saved replay trajectory. Use when replay fails due to an outdated or broken trajectory — the next successful task run will save a fresh one.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "traj_id": {"type": "string", "description": "Trajectory ID to delete"},
-            },
-            "required": ["traj_id"],
-        },
-    },
-}
-
-
-def execute_delete_trajectory(traj_id: str) -> dict:
-    from cua.replay import delete_trajectory
-    delete_trajectory(traj_id)
-    return {
-        "content": [{"type": "text", "text": f"Trajectory deleted: {traj_id}"}],
-        "mouse_pos": None, "last_screenshot": None,
-    }
