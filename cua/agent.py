@@ -587,8 +587,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 print(f"  [{name}] {args_str}")
                 _current_tool_log.append(f"[{name}] {args_str}")
 
-                # Record step for future trajectory replay
-                recorder.record_step(name, args, img, screen_w, screen_h, mouse_pos)
+                # Record step (only save screenshots for action tools)
+                save_screenshot = (name in VERIFY_TOOLS)
+                recorder.record_step(name, args, img, screen_w, screen_h, mouse_pos, save_screenshot=save_screenshot)
 
                 # Save before-screenshot for verify step
                 img_before = img.copy() if name in VERIFY_TOOLS else None

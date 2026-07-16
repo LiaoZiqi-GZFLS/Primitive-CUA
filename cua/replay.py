@@ -44,17 +44,14 @@ class TrajectoryRecorder:
         self._last_screenshot: np.ndarray | None = None
 
     def record_step(self, name: str, args: dict, screenshot_before: np.ndarray,
-                    screen_w: int, screen_h: int, mouse_pos: tuple):
-        """Record a tool call with the screenshot BEFORE execution."""
-        downscaled, _, _ = downsample_for_vlm(screenshot_before, mouse_pos, screen_w, screen_h)
-        rgb = downscaled[..., [2, 1, 0]]  # BGRA→RGB
-        b64 = _np_to_png_b64(rgb)
-
-        self.steps.append({
-            "name": name,
-            "args": args,
-            "screenshot_b64": b64,
-        })
+                    screen_w: int, screen_h: int, mouse_pos: tuple, save_screenshot: bool = True):
+        """Record a tool call. Only saves screenshot for action tools (save_screenshot=True)."""
+        step = {"name": name, "args": args, "screenshot_b64": ""}
+        if save_screenshot:
+            downscaled, _, _ = downsample_for_vlm(screenshot_before, mouse_pos, screen_w, screen_h)
+            rgb = downscaled[..., [2, 1, 0]]  # BGRA→RGB
+            step["screenshot_b64"] = _np_to_png_b64(rgb)
+        self.steps.append(step)
         self._last_screenshot = screenshot_before
 
     def save(self) -> str | None:
@@ -284,9 +281,8 @@ def attempt_replay(traj: dict, task: str, similar_text: str,
         if result.get("last_screenshot") is not None:
             current = result["last_screenshot"]
 
-        # Verify this step (only for state-changing tools)
-        from cua.agent import VERIFY_TOOLS
-        if name in VERIFY_TOOLS:
+        # Verify this step (only if it has a reference screenshot)
+        if step.get("screenshot_b64"):
             time.sleep(0.5)  # Let UI settle
             current = np.array(sct.grab(sct.monitors[1]))
             verification = verify_step(step, current, sct, mouse_pos, screen_w, screen_h, client, model)
