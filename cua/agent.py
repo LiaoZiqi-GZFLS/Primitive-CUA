@@ -903,6 +903,9 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     _total_action_count += 1
                     _cleanup_context(messages)
 
+                    # Update the recorded step with AFTER screenshot
+                    recorder.update_last_step_screenshot(img, screen_w, screen_h, mouse_pos)
+
                     # Every 5 actions, nudge to use memory if not used recently
                     if _total_action_count > 0 and _total_action_count % 5 == 0:
                         messages.append({

@@ -54,6 +54,14 @@ class TrajectoryRecorder:
         self.steps.append(step)
         self._last_screenshot = screenshot_before
 
+    def update_last_step_screenshot(self, after_screenshot: np.ndarray,
+                                     screen_w: int, screen_h: int, mouse_pos: tuple):
+        """Replace the last recorded step's screenshot with AFTER-action state."""
+        if self.steps:
+            downscaled, _, _ = downsample_for_vlm(after_screenshot, mouse_pos, screen_w, screen_h)
+            rgb = downscaled[..., [2, 1, 0]]
+            self.steps[-1]["screenshot_b64"] = _np_to_png_b64(rgb)
+
     def save(self) -> str | None:
         """Save trajectory to disk. Returns trajectory ID or None."""
         if len(self.steps) < 2:
