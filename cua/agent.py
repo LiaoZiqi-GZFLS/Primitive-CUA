@@ -1,7 +1,6 @@
 """Agent core loop: drives the Kimi K2.6 tool-calling cycle."""
 import json
 import time
-from typing import Any
 
 import mss
 import numpy as np
@@ -13,7 +12,6 @@ from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import build_tools
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.learning import get_learnings_prompt, index_knowledge
-from cua.overlay import draw_cursor
 
 # Module-level tool log for Ctrl+C recovery
 _current_tool_log: list[str] = []
@@ -507,10 +505,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
         # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
-
-        # Inject past learnings into system prompt
-        learnings_text = get_learnings_prompt()
-        system_content = SYSTEM_PROMPT + learnings_text
 
         # Tool call log (module-level for Ctrl+C recovery)
         _current_tool_log.clear()
