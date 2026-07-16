@@ -230,7 +230,7 @@ def _decide_trajectory_action(task: str, summary: str, new_steps: list,
 
 def _find_similar_traj(task_summary: str) -> str | None:
     """Find the most similar existing trajectory ID. Returns None if no good match."""
-    files = list(TRAJ_DIR.glob("*.json"))
+    files = [f for f in TRAJ_DIR.glob("*.json") if not f.name.endswith(".old.json")]
     if not files:
         return None
 
@@ -287,7 +287,7 @@ def find_trajectory(task_summary: str) -> dict | None:
         return None
 
     # Get all trajectory files
-    files = list(TRAJ_DIR.glob("*.json"))
+    files = [f for f in TRAJ_DIR.glob("*.json") if not f.name.endswith(".old.json")]
     if not files:
         return None
 
@@ -329,10 +329,8 @@ def find_trajectory(task_summary: str) -> dict | None:
     except Exception:
         pass
 
-    # Fallback: return the most recent trajectory
-    newest = max(files, key=lambda f: f.stat().st_mtime)
-    with open(newest, "r", encoding="utf-8") as f:
-        return json.load(f)
+    # Fallback: no good match — return None
+    return None
 
 
 def delete_trajectory(traj_id: str):

@@ -858,9 +858,15 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     after_full = img_after[..., [2, 1, 0]]
 
                     # Collect BEFORE OCR result + run AFTER OCR
-                    before_result, _ = before_future.result()
-                    ocr = _get_ocr_engine()
-                    after_result, _ = ocr(after_full)
+                    try:
+                        before_result, _ = before_future.result()
+                    except Exception:
+                        before_result = None
+                    try:
+                        ocr = _get_ocr_engine()
+                        after_result, _ = ocr(after_full)
+                    except Exception:
+                        after_result = None
                     executor.shutdown(wait=False)
 
                     def _format_ocr(result) -> str:

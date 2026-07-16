@@ -3,7 +3,7 @@
 # --- Tool group definitions ---
 
 BASE_TOOLS = [
-    "screenshot", "set_mouse", "click", "drag",
+    "screenshot", "set_mouse", "click", "drag", "scroll",
     "type_keys", "magnifier", "ocr",
     "paste_text", "read_clipboard",
     "think", "note", "wait",
