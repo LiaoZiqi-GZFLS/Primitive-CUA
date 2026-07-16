@@ -433,7 +433,7 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
                 )},
             ],
             response_format={"type": "json_object"},
-            max_tokens=256,
+            max_tokens=512,
             extra_body={"thinking": {"type": "disabled"}},
         )
         content = resp.choices[0].message.content
@@ -497,7 +497,7 @@ def settle_pending(client, model: str):
                     {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
                 ],
                 response_format={"type": "json_object"},
-                max_tokens=200,
+                max_tokens=300,
                 extra_body={"thinking": {"type": "disabled"}},
             )
             content = resp.choices[0].message.content
