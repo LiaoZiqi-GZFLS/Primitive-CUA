@@ -631,8 +631,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             )
                             if traj_id:
                                 print(f"  [replay] trajectory saved: {traj_id}")
-                        except Exception:
-                            pass  # Best-effort
+                            else:
+                                print(f"  [replay] trajectory skipped: <2 action steps in recorder")
+                        except Exception as e:
+                            print(f"  [replay] trajectory save failed: {e}")
 
                     return result["_finish_report"]
 

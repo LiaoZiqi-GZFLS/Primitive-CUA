@@ -64,8 +64,9 @@ class TrajectoryRecorder:
 
     def save(self, task_summary: str = "", client=None, model: str = "") -> str | None:
         """Save trajectory. Uses LLM to decide: overwrite, modify, or abandon if similar exists."""
-        if len(self.steps) < 2:
-            return None
+        action_steps = [s for s in self.steps if s.get("screenshot_b64") and len(s["screenshot_b64"]) > 100]
+        if len(action_steps) < 1:
+            return None  # Need at least one action screenshot
 
         traj_id = hashlib.sha256(
             json.dumps([s["name"] for s in self.steps]).encode()
