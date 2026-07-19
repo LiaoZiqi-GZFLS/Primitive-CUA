@@ -4,6 +4,9 @@ cua/config.yaml
 # CUA runtime data (SQLite, ChromaDB, cache)
 cua/data/
 
+# Superpowers brainstorm state
+.superpowers/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

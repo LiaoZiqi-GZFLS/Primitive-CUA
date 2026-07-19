@@ -22,7 +22,7 @@ def main():
     """Run the CUA agent in an interactive CLI loop."""
     config = load_config()
 
-    model = config.get("model", "kimi-k2.6")
+    model = config.get("model", "kimi-k3")
     base_url = config.get("base_url", "https://api.moonshot.cn/v1")
     api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
 

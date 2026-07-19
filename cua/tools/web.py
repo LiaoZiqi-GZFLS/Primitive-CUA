@@ -1,10 +1,6 @@
 """Web tools using Playwright: navigate, get_content, click, type."""
 import time
 
-from cua.tools.screenshot import _np_to_png_b64
-from cua.overlay import draw_cursor
-
-
 # Module-level browser state — lazy init, reused across calls
 _browser = None
 _page = None
@@ -212,14 +208,16 @@ def execute_web_type(label: str, text: str) -> dict:
     """Type into an input field."""
     try:
         page = _get_page()
-        # Try placeholder first, then label, then name/id
-        inp = (
-            page.get_by_placeholder(label).first
-            or page.get_by_label(label).first
-            or page.locator(f'[name="{label}"]').first
-            or page.locator(f'#{label}').first
-        )
-        inp.fill(text)
+        # Try placeholder first, then label, then name/id.
+        # Playwright Locator objects are always truthy — use count() for fallback.
+        inp = page.get_by_placeholder(label)
+        if inp.count() == 0:
+            inp = page.get_by_label(label)
+        if inp.count() == 0:
+            inp = page.locator(f'[name="{label}"]')
+        if inp.count() == 0:
+            inp = page.locator(f'#{label}')
+        inp.first.fill(text)
         time.sleep(0.2)
         return {
             "content": [
@@ -316,7 +314,6 @@ WEB_LIST_TABS_SCHEMA = {
 
 def execute_web_new_tab() -> dict:
     try:
-        from playwright.sync_api import sync_playwright
         page = _get_page()
         ctx = page.context
         new_page = ctx.new_page()

@@ -1,7 +1,6 @@
 """Document tools using Kimi Files API: upload, extract, list, cleanup."""
 
 import hashlib
-import time
 from pathlib import Path
 
 # Track uploaded file IDs for lifecycle management

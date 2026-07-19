@@ -1,4 +1,4 @@
-"""Agent core loop: drives the Kimi K2.6 tool-calling cycle."""
+"""Agent core loop: drives the Kimi K3 tool-calling cycle."""
 import json
 import time
 
@@ -9,7 +9,7 @@ from openai import OpenAI
 
 from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
-from cua.tools.loader import build_tools
+from cua.tools.loader import _search_similar
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.learning import get_learnings_prompt, index_knowledge
 
@@ -56,7 +56,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows des
 - **type_keys(keys, repeat?)**: Keyboard shortcuts and special keys ONLY ("ctrl+c", "enter", "tab", "escape", "backspace", "delete", "f5", "alt+tab", "win+r"). Use repeat=N for multiple presses (e.g. "backspace" repeat=10). DO NOT use for typing text — use paste_text for ALL text input.
 - **magnifier**: Square crop centered on cursor, side = half the shorter screen edge. Use for fine details.
 - **ocr**: Run OCR on the current screenshot. Returns text blocks with positions and confidence.
-- **web_search(query)**: Search the web via Kimi built-in search.
+- **web_search(query)**: Search the web via Kimi built-in search (may be unreliable on K3 — prefer web_navigate for web tasks).
 - **read_clipboard**: Read text content from the system clipboard. Use to check what was copied.
 - **paste_text(text)**: THE primary text input method. Copies text to clipboard → Ctrl+V. Works for ALL text: Chinese, English, emoji, code, long paragraphs. Use this for EVERY text input. Only use type_keys for keyboard shortcuts, never for content.
 - **think**: Pause to reflect on progress and plan next steps. Use when you're stuck, unsure, or need to strategize. Does NOT perform any action — it gives you space to think before your next move.
@@ -300,10 +300,6 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
         if i < compress_start_idx:
             keep.append(msg)
         elif i <= compress_end_idx:
-            # Skip system prompt and the first think result
-            if i == 0:  # system prompt
-                keep.append(msg)
-                continue
             if msg["role"] == "tool" and msg.get("name") == "think":
                 keep.append(msg)  # preserve round-0 think
                 continue
@@ -347,7 +343,6 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
                 {"role": "user", "content": trace_text},
             ],
             max_tokens=300,
-            extra_body={"thinking": {"type": "disabled"}},
         )
         summary = resp.choices[0].message.content or ""
 
@@ -377,7 +372,7 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
                 if not msg["tool_calls"]:
                     del msg["tool_calls"]
                     if not msg.get("content"):
-                        msg["content"] = ""
+                        continue  # Skip empty assistant message entirely
             if msg["role"] == "tool":
                 # Remove tool messages whose tool_call_id no longer has a matching
                 # assistant tool_call in keep
@@ -420,25 +415,25 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "  2. Set the MOONSHOT_API_KEY environment variable"
         )
 
-    model = config.get("model", "kimi-k2.6")
+    model = config.get("model", "kimi-k3")
     base_url = config.get("base_url", "https://api.moonshot.cn/v1")
-    max_tokens = config.get("max_tokens", 32768)
+    max_tokens = config.get("max_completion_tokens") or config.get("max_tokens", 131072)
     max_iterations = config.get("max_iterations", 50)
 
-    # Create client first (needed for LLM classification)
+    # Create OpenAI-compatible client
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     # Index knowledge base on startup
     index_knowledge()
 
-    # Dynamically load tools based on LLM task classification
-    tool_names, tool_info, task_class = build_tools(task, client, model)
-    active_tools = [t for t in ALL_TOOLS if t["function"]["name"] in tool_names]
-    print(f"  Tools loaded: {tool_info} = {len(active_tools)} total")
+    # K3: 1M context + auto-caching — always send all tools, no classification needed.
+    # The model handles tool selection natively.
+    active_tools = ALL_TOOLS
+    print(f"  Tools: {len(ALL_TOOLS)} total (K3 native selection, auto-cached)")
 
-    # Inject similar past learnings into first think()
+    # Search ChromaDB for similar past learnings to inject into first think()
     from cua.tools.think import set_think_context
-    similar_text = task_class.get("similar", "")
+    similar_text = _search_similar(task[:80])
     set_think_context(similar_text)
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
@@ -467,10 +462,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
         # Check for trajectory replay opportunity
         _replay_result = None
-        if similar_text and client is not None:
-            from cua.replay import attempt_replay, find_trajectory, SIMILARITY_REPLAY_THRESHOLD
-            print(f"  [replay] checking replay viability (threshold={int(SIMILARITY_REPLAY_THRESHOLD*100)}%)...")
-            traj = find_trajectory(task_class.get("summary", task))
+        if similar_text:
+            from cua.replay import attempt_replay, find_trajectory
+            print(f"  [replay] checking replay viability...")
+            traj = find_trajectory(task[:80])
             if traj:
                 print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
                 _replay_result = attempt_replay(
@@ -542,8 +537,8 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     model=model,
                     messages=messages,
                     tools=active_tools,
-                    max_tokens=max_tokens,
-                    extra_body={"thinking": {"type": "disabled"}},
+                    max_completion_tokens=max_tokens,
+                    reasoning_effort="max",
                 )
             except openai.AuthenticationError:
                 raise  # Auth errors are not retryable
@@ -564,7 +559,11 @@ def run_task(task: str, config: dict | None = None) -> dict:
                 # Model output text without calling a tool — likely a summary.
                 # Remind it to use finish() to properly end the task.
                 print(f"  [text response, nudging to call finish]")
-                messages.append({"role": "assistant", "content": msg.content})
+                # K3: preserve reasoning_content in text-only responses too
+                text_msg = {"role": "assistant", "content": msg.content}
+                if getattr(msg, "reasoning_content", None):
+                    text_msg["reasoning_content"] = msg.reasoning_content
+                messages.append(text_msg)
                 messages.append({
                     "role": "user",
                     "content": (
@@ -580,21 +579,29 @@ def run_task(task: str, config: dict | None = None) -> dict:
             if not msg.tool_calls:
                 continue
 
-            assistant_msg = {
-                "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
+            # K3: MUST preserve complete assistant message including reasoning_content.
+            # Use model_dump() to capture all fields the API returns.
+            try:
+                assistant_msg = msg.model_dump(exclude_none=True)
+            except Exception:
+                # Fallback: manual reconstruction with reasoning_content
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                }
+                if getattr(msg, "reasoning_content", None):
+                    assistant_msg["reasoning_content"] = msg.reasoning_content
             messages.append(assistant_msg)
 
             # Show model's reasoning before tool calls
@@ -656,7 +663,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     if success:
                         try:
                             traj_id = recorder.save(
-                                task_summary=task_class.get("summary", ""),
+                                task_summary=task[:80],
                                 client=client, model=model,
                             )
                             if traj_id:
@@ -804,7 +811,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             model=model,
                             messages=clean_messages,
                             max_tokens=512,
-                            extra_body={"thinking": {"type": "disabled"}},
                         )
                         cleaned_ocr = clean_resp.choices[0].message.content or ""
                         if hasattr(clean_resp, "usage") and clean_resp.usage:
@@ -840,28 +846,30 @@ def run_task(task: str, config: dict | None = None) -> dict:
                         return engine(before_full)
 
                     executor = ThreadPoolExecutor(max_workers=1)
-                    before_future = executor.submit(_ocr_before)
-
-                    print(f"  [verify] waiting 1s (OCR in background), taking after-screenshot...")
-                    time.sleep(1.0)
-                    img_after = np.array(sct.grab(monitor))
-                    img = img_after  # update current screenshot
-
-                    after_scaled, _, _ = downsample_for_vlm(img_after, mouse_pos, screen_w, screen_h)
-                    after_rgb = after_scaled[..., [2, 1, 0]]
-                    after_full = img_after[..., [2, 1, 0]]
-
-                    # Collect BEFORE OCR result + run AFTER OCR
                     try:
-                        before_result, _ = before_future.result()
-                    except Exception:
-                        before_result = None
-                    try:
-                        ocr = _get_ocr_engine()
-                        after_result, _ = ocr(after_full)
-                    except Exception:
-                        after_result = None
-                    executor.shutdown(wait=False)
+                        before_future = executor.submit(_ocr_before)
+
+                        print(f"  [verify] waiting 1s (OCR in background), taking after-screenshot...")
+                        time.sleep(1.0)
+                        img_after = np.array(sct.grab(monitor))
+                        img = img_after  # update current screenshot
+
+                        after_scaled, _, _ = downsample_for_vlm(img_after, mouse_pos, screen_w, screen_h)
+                        after_rgb = after_scaled[..., [2, 1, 0]]
+                        after_full = img_after[..., [2, 1, 0]]
+
+                        # Collect BEFORE OCR result + run AFTER OCR
+                        try:
+                            before_result, _ = before_future.result()
+                        except Exception:
+                            before_result = None
+                        try:
+                            ocr = _get_ocr_engine()
+                            after_result, _ = ocr(after_full)
+                        except Exception:
+                            after_result = None
+                    finally:
+                        executor.shutdown(wait=False)
 
                     def _format_ocr(result) -> str:
                         if not result:
@@ -909,7 +917,6 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             model=model,
                             messages=analyst_messages,
                             max_tokens=256,
-                            extra_body={"thinking": {"type": "disabled"}},
                         )
                         raw_analyst = analysis.choices[0].message.content or ""
                         if hasattr(analysis, "usage") and analysis.usage:
@@ -928,7 +935,7 @@ def run_task(task: str, config: dict | None = None) -> dict:
                                 from cua.learning import search_knowledge
                                 knowledge_hits = search_knowledge(en_query)
                                 if knowledge_hits:
-                                    print(f"  [verify] knowledge: {len(knowledge_hits.split(chr(10)))} hits")
+                                    print(f"  [verify] knowledge: {len(knowledge_hits.splitlines())} hits")
                         except (json.JSONDecodeError, Exception):
                             pass  # Use raw text as summary
 

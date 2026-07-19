@@ -1,18 +1,20 @@
 # Primitive-CUA
 
-A single-loop Computer Use Agent (CUA) prototype that controls Windows desktop through tool-calling. Uses **Kimi K2.6** (Moonshot AI) as the vision-language model, `mss` for screen capture, and `pyautogui` for mouse/keyboard control.
+A Computer Use Agent (CUA) that controls Windows desktop through tool-calling. Uses **Kimi K3** (Moonshot AI, 1M context, 2.8T params) as the vision-language model, with 47 specialized tools for desktop, web, and native app automation.
 
 ## Architecture
 
 ```
-User Task → Agent Loop → Kimi K2.6 API
+User Task → Dynamic Tool Loader (LLM classification)
+                ↓
+         Agent Loop → Kimi K3 API
                 ↕
-        9 Tools (screenshot, mouse, keyboard, magnifier, OCR, web search, ...)
+        47 Tools (desktop, web, UIA, clipboard, document, memory, subagents)
+                ↓
+         Post-task Learning (AutoSkill / Reflection / Pending)
 ```
 
-The agent receives a task, takes a screenshot, and enters a tool-calling loop: the model sees the screen → decides what action to take → calls a tool → receives a new screenshot → repeats until the task is done or cannot be completed.
-
-Every screenshot is sent as **two images**: the original and an annotated version with a red crosshair + circle marking the virtual mouse cursor position.
+The agent receives a task, classifies it to load only relevant tools, takes a screenshot, and enters a tool-calling loop: the model sees the screen → decides what action to take → calls tools → receives results → repeats until done.
 
 ## Quick Start
 
@@ -24,106 +26,57 @@ pip install -r cua/requirements.txt
 
 ### 2. Set API key
 
-Copy the example config and fill in your Kimi API key:
-
 ```bash
 cp cua/config.example.yaml cua/config.yaml
 # Edit cua/config.yaml → set moonshot_api_key
 ```
 
-Or set the environment variable:
+Or: `$env:MOONSHOT_API_KEY = "your-key"` (PowerShell) / `export MOONSHOT_API_KEY="your-key"` (bash).
 
-```bash
-# Windows PowerShell
-$env:MOONSHOT_API_KEY = "your-key"
-
-# Linux/macOS
-export MOONSHOT_API_KEY="your-key"
-```
-
-Get an API key at [Kimi Open Platform](https://platform.kimi.com/console/api-keys).
+Get a key at [Kimi Open Platform](https://platform.kimi.com/console/api-keys).
 
 ### 3. Run
 
 ```bash
-# Single task
-python cua/cli.py "打开记事本并输入hello world"
-
-# Interactive mode
-python cua/cli.py
+python cua/cli.py                           # Interactive mode
+python cua/cli.py "打开记事本写hello world"  # Single task
 ```
 
-## Tools
+## Tool Categories
 
-| Tool | Description |
-|------|-------------|
-| `screenshot` | Full-screen capture via `mss`. Returns original + annotated image with virtual mouse overlay |
-| `set_mouse(x, y)` | Move virtual mouse to normalized coordinates (0.0–1.0) |
-| `click(button, type, count, scroll)` | Click at current mouse position. Supports left/right/middle, single/double, multi-click, scroll |
-| `drag(from_x, from_y, to_x, to_y)` | Drag from one position to another |
-| `type_keys(keys)` | Type text or press key combos (e.g. `["ctrl", "c"]`) |
-| `magnifier` | Square crop centered on cursor, side = half the shorter screen edge, with scaled overlay |
-| `ocr` | Run RapidOCR on the most recent screenshot, returns text blocks with bounding boxes |
-| `web_search(query)` | Kimi built-in web search |
-| `finish(success, summary, steps)` | End the task with a structured report |
-
-## Virtual Mouse
-
-All mouse coordinates are **normalized to [0, 1]** with 4 decimal places:
-- `(0.0000, 0.0000)` = top-left corner
-- `(1.0000, 1.0000)` = bottom-right corner
-
-The virtual mouse cursor is rendered as a red circle (white border) + full-image red crosshair on annotated screenshots.
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Desktop** | screenshot, set_mouse, click, drag, scroll, type_keys, paste_text, magnifier, ocr | Screen capture, mouse/keyboard/clipboard |
+| **Windows** | list_windows, focus_window, launch_app | Window discovery, switching, app launch |
+| **Web** | web_navigate, web_click, web_type, web_get_content, web_scroll (+7 more) | Playwright-driven browser automation |
+| **UIA** | uia_inspect, uia_click, uia_set_value, uia_get_text, run_command | Windows UI Automation for Office/native apps |
+| **Utility** | think, wait, note, file_read, file_write | Reasoning, timing, persistence |
+| **Document** | ReadDocument, ListDocuments, DeleteDocument, CleanupDocuments | Kimi Files API for PDF/DOCX extraction |
+| **Memory** | memory, rethink | Kimi Formula remote KV storage + consolidation |
+| **Subagents** | DraftContent, GenerateImage | Isolated sessions for writing and image generation |
 
 ## Configuration
 
-See `cua/config.example.yaml` for all options:
-
 ```yaml
-moonshot_api_key: ""       # Kimi API key
-model: "kimi-k2.6"         # LLM model
-max_tokens: 32768          # Max tokens per API call
-max_iterations: 50         # Max tool-calling iterations per task
-jpeg_quality: 85           # Screenshot JPEG quality
-
-overlay:                   # Cursor overlay style
-  circle_radius: 15
-  color: "#e74c3c"
-```
-
-## Project Structure
-
-```
-cua/
-├── cli.py              # Interactive CLI entry point
-├── agent.py            # Core agent loop: Kimi K2.6 tool-calling cycle
-├── config.py           # YAML config loader (defaults → config.yaml → env vars)
-├── overlay.py          # Virtual mouse cursor renderer
-├── tools/
-│   ├── __init__.py     # Tool registry + execute_tool() dispatcher
-│   ├── screenshot.py   # mss capture + base64 JPEG encoding
-│   ├── mouse.py        # set_mouse, click, drag
-│   ├── keyboard.py     # type_keys
-│   ├── magnifier.py    # Square crop with proportional overlay
-│   ├── ocr.py          # RapidOCR text extraction
-│   └── finish.py       # Task completion reporting
-├── config.example.yaml # Configuration template
-├── config.yaml         # Your local config (gitignored)
-├── requirements.txt
-└── test_overlay.py     # Overlay rendering tests
+moonshot_api_key: ""              # Kimi API key
+model: "kimi-k3"                  # LLM model
+max_completion_tokens: 131072     # Max tokens per API call (K3 max: 1048576)
+max_iterations: 50                # Max tool-calling iterations per task
 ```
 
 ## Design Decisions
 
-- **thinking=disabled**: Required for `$web_search` compatibility with K2.6
-- **JPEG base64**: Screenshots compressed to JPEG (quality 85) before base64 encoding to reduce token cost
+- **K3 always thinking**: K3 always produces reasoning; `reasoning_effort="max"` is default. No `thinking=disabled` needed.
+- **PNG base64**: Screenshots tiered downscaled then PNG-encoded (≤2K keep, 4K→2K, 4K+→4K)
+- **Normalized coordinates**: Mouse positions use [0,1] range with 4 decimal places
+- **Dynamic tool loading**: LLM classifies task → loads only relevant tool groups (40+ tools available)
+- **Learning system**: Success → AutoSkill, Failure → Reflection, Interrupted → Pending settlement
 - **No context between rounds**: Each CLI task builds a fresh `messages` list
-- **Tool results as user messages**: Images are fed back via user-role messages since Kimi API only renders `image_url` in user messages
 
 ## Requirements
 
 - Python 3.10+
-- Windows (primary target — uses `mss` and `pyautogui`)
+- Windows (uses `mss`, `pyautogui`, `pygetwindow`, `uiautomation`)
 - Kimi API key
 
 ## License

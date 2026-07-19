@@ -13,20 +13,15 @@ def _downscale(img: np.ndarray, screen_w: int, screen_h: int) -> tuple[np.ndarra
     """Tiered downscaling to reduce VLM token consumption.
 
     Scaling strategy:
-    - 1080p (≤1920) → keep original
-    - 2K (≤2560)     → target 1080p
+    - ≤2K (≤2560)    → keep original (no compression)
     - 4K (≤4096)     → target 2K
     - 4K+             → target 4K
 
     Returns (resized_image, scale_factor).
     """
     max_dim = max(screen_w, screen_h)
-    if max_dim <= 1920:
-        target_w, target_h = screen_w, screen_h  # 1080p — keep
-    elif max_dim <= 2560:
-        # 2K → 1080p
-        scale = 1920 / max_dim
-        target_w, target_h = int(screen_w * scale), int(screen_h * scale)
+    if max_dim <= 2560:
+        target_w, target_h = screen_w, screen_h  # ≤2K — keep original
     elif max_dim <= 4096:
         # 4K → 2K
         scale = 2560 / max_dim

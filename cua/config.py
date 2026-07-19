@@ -8,9 +8,9 @@ import yaml
 # Defaults
 DEFAULTS = {
     "moonshot_api_key": "",
-    "model": "kimi-k2.6",
+    "model": "kimi-k3",
     "base_url": "https://api.moonshot.cn/v1",
-    "max_tokens": 32768,
+    "max_completion_tokens": 131072,  # K3 uses max_completion_tokens (max_tokens also accepted)
     "max_iterations": 50,
     "jpeg_quality": 85,
     "overlay": {

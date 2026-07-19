@@ -72,7 +72,7 @@ def execute_draft_content(
         if not api_key:
             return _error("API key not configured")
         base_url = config.get("base_url", "https://api.moonshot.cn/v1")
-        model = config.get("model", "kimi-k2.6")
+        model = config.get("model", "kimi-k3")
 
         client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -118,7 +118,6 @@ def execute_draft_content(
             model=model,
             messages=messages,
             max_tokens=min(max_chars * 2, 16384),
-            extra_body={"thinking": {"type": "disabled"}},
         )
         elapsed = time.time() - start
 

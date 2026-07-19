@@ -1,11 +1,10 @@
 """Virtual mouse control tools: set_mouse, click, drag."""
-import json
 import time
-from typing import Any
 
 import numpy as np
 import pyautogui
 
+from cua.overlay import draw_cursor
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 
 # Fail-safe: move to corner to abort
@@ -64,7 +63,7 @@ def execute_set_mouse(
     img = _grab_screen(sct)
     new_mouse = (_norm(px, screen_w), _norm(py, screen_h))
     scaled_img, spx, spy = downsample_for_vlm(img, new_mouse, screen_w, screen_h)
-    from cua.overlay import draw_cursor
+
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
     scaled_rgb = scaled_img[..., [2, 1, 0]]
@@ -148,7 +147,7 @@ def execute_click(
 
     img = _grab_screen(sct)
     scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
-    from cua.overlay import draw_cursor
+
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
     scaled_rgb = scaled_img[..., [2, 1, 0]]
@@ -217,7 +216,7 @@ def execute_drag(
     img = _grab_screen(sct)
     new_mouse = (_norm(tpx, screen_w), _norm(tpy, screen_h))
     scaled_img, spx, spy = downsample_for_vlm(img, new_mouse, screen_w, screen_h)
-    from cua.overlay import draw_cursor
+
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
     scaled_rgb = scaled_img[..., [2, 1, 0]]
@@ -281,7 +280,7 @@ def execute_scroll(
     img = _grab_screen(sct)
     mouse_pos = (_norm(px, screen_w), _norm(py, screen_h))
     scaled_img, spx, spy = downsample_for_vlm(img, mouse_pos, screen_w, screen_h)
-    from cua.overlay import draw_cursor
+
     annotated = draw_cursor(scaled_img, spx, spy, scale=1.0)
 
     scaled_rgb = scaled_img[..., [2, 1, 0]]

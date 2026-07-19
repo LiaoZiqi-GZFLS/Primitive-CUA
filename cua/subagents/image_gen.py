@@ -10,9 +10,9 @@ Returns summary to main agent — no context pollution.
 """
 
 import hashlib
+import json
 import os
 import re
-import time
 from pathlib import Path
 
 GENERATED_DIR = Path(__file__).parent.parent / "data" / "cache" / "generated"
@@ -74,7 +74,8 @@ def _render_svg(svg_code: str, output_path: Path) -> bool:
 def _upload_png(png_path: Path, client, model: str) -> str | None:
     """Upload PNG to Kimi Files API, return ms:// URL."""
     try:
-        file_obj = client.files.create(file=open(png_path, "rb"), purpose="image")
+        with open(png_path, "rb") as f:
+            file_obj = client.files.create(file=f, purpose="image")
         return f"ms://{file_obj.id}"
     except Exception as e:
         print(f"  [image_gen] upload failed: {e}")
@@ -97,7 +98,7 @@ def execute_generate_image(requirement: str) -> dict:
         if not api_key:
             return _error("API key not configured")
         base_url = config.get("base_url", "https://api.moonshot.cn/v1")
-        model = config.get("model", "kimi-k2.6")
+        model = config.get("model", "kimi-k3")
 
         client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -127,7 +128,6 @@ def execute_generate_image(requirement: str) -> dict:
                     model=model,
                     messages=gen_messages,
                     max_tokens=4096,
-                    extra_body={"thinking": {"type": "disabled"}},
                 )
                 svg_text = resp.choices[0].message.content or ""
             except Exception as e:
@@ -169,9 +169,7 @@ def execute_generate_image(requirement: str) -> dict:
                     ],
                     response_format={"type": "json_object"},
                     max_tokens=300,
-                    extra_body={"thinking": {"type": "disabled"}},
                 )
-                import json
                 verdict = json.loads(review_resp.choices[0].message.content)
                 ok = verdict.get("ok", False)
                 last_issues = verdict.get("issues", "")

@@ -1,12 +1,11 @@
 """Windows management tools: list_windows, focus_window, launch_app."""
 import json
-import subprocess
 import time
 
 import pyautogui
 import pygetwindow as gw
 
-from cua.tools.mouse import _grab_screen, _denorm
+from cua.tools.mouse import _grab_screen
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
 from cua.overlay import draw_cursor
 

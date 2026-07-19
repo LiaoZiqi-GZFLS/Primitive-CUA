@@ -9,9 +9,8 @@ All best-effort — never blocks the main task loop.
 """
 
 import json
-import os
 import sqlite3
-import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -177,9 +176,6 @@ def _get_db() -> sqlite3.Connection:
     return conn
 
 
-from contextlib import contextmanager
-
-
 @contextmanager
 def _db():
     """Context manager for SQLite connections — auto-closes."""
@@ -191,71 +187,70 @@ def _db():
 
 
 def _init_db():
-    conn = _get_db()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS learnings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL CHECK(type IN ('success_pattern','failure_fix')),
-            context TEXT NOT NULL,
-            learning TEXT NOT NULL,
-            tools TEXT NOT NULL DEFAULT '[]',
-            task TEXT,
-            outcome TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+    with _db() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS learnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL CHECK(type IN ('success_pattern','failure_fix')),
+                context TEXT NOT NULL,
+                learning TEXT NOT NULL,
+                tools TEXT NOT NULL DEFAULT '[]',
+                task TEXT,
+                outcome TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
 
-        CREATE TABLE IF NOT EXISTS reflections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT NOT NULL,
-            failure_reason TEXT NOT NULL,
-            fix_suggestion TEXT NOT NULL,
-            tool_trace TEXT,
-            tokens INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+            CREATE TABLE IF NOT EXISTS reflections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT NOT NULL,
+                failure_reason TEXT NOT NULL,
+                fix_suggestion TEXT NOT NULL,
+                tool_trace TEXT,
+                tokens INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
 
-        CREATE TABLE IF NOT EXISTS pending_learning (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            traces_json TEXT NOT NULL,
-            settled INTEGER NOT NULL DEFAULT 0,
-            settled_at TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+            CREATE TABLE IF NOT EXISTS pending_learning (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                traces_json TEXT NOT NULL,
+                settled INTEGER NOT NULL DEFAULT 0,
+                settled_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
 
-        CREATE TABLE IF NOT EXISTS skills_index (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT,
-            file_path TEXT NOT NULL,
-            version TEXT NOT NULL DEFAULT '1.0.0',
-            usage_count INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-    """)
-    # Cleanup expired entries (only if cleanup_days > 0)
-    cleanup_days = _cfg("cleanup_days", 0)
-    if cleanup_days > 0:
-        cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
-        conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
-        conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
-        conn.execute("DELETE FROM pending_learning WHERE settled=1")  # always clean settled
+            CREATE TABLE IF NOT EXISTS skills_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                file_path TEXT NOT NULL,
+                version TEXT NOT NULL DEFAULT '1.0.0',
+                usage_count INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        """)
+        # Cleanup expired entries (only if cleanup_days > 0)
+        cleanup_days = _cfg("cleanup_days", 0)
+        if cleanup_days > 0:
+            cutoff = (datetime.now() - timedelta(days=cleanup_days)).isoformat()
+            conn.execute("DELETE FROM learnings WHERE created_at < ?", (cutoff,))
+            conn.execute("DELETE FROM reflections WHERE created_at < ?", (cutoff,))
+            conn.execute("DELETE FROM pending_learning WHERE settled=1")
 
-    # Prune skills if over max (0 = unlimited, skip)
-    max_skills = _cfg("autoskill_max_skills", 0)
-    if max_skills > 0:
-        count = conn.execute("SELECT COUNT(*) as n FROM skills_index").fetchone()["n"]
-        if count > max_skills:
-            excess = count - max_skills
-            conn.execute(
-                "DELETE FROM skills_index WHERE id IN (SELECT id FROM skills_index ORDER BY usage_count ASC, created_at ASC LIMIT ?)",
-                (excess,),
-            )
+        # Prune skills if over max (0 = unlimited, skip)
+        max_skills = _cfg("autoskill_max_skills", 0)
+        if max_skills > 0:
+            count = conn.execute("SELECT COUNT(*) as n FROM skills_index").fetchone()["n"]
+            if count > max_skills:
+                excess = count - max_skills
+                conn.execute(
+                    "DELETE FROM skills_index WHERE id IN (SELECT id FROM skills_index ORDER BY usage_count ASC, created_at ASC LIMIT ?)",
+                    (excess,),
+                )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 # --- Layer 1: AutoSkill (success) ---
@@ -289,7 +284,6 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
                 )},
             ],
             response_format={"type": "json_object"},
-            extra_body={"thinking": {"type": "disabled"}},
         )
         content = resp.choices[0].message.content
         if not content:
@@ -445,27 +439,26 @@ def autoskill_learn(task: str, report: dict, tool_log: list[str], client, model:
         # Index in ChromaDB
         _index_skill(name, desc)
 
-        conn = _get_db()
-        existing = conn.execute(
-            "SELECT id, version, usage_count FROM skills_index WHERE name = ?", (name,)
-        ).fetchone()
+        with _db() as conn:
+            existing = conn.execute(
+                "SELECT id, version, usage_count FROM skills_index WHERE name = ?", (name,)
+            ).fetchone()
 
-        if existing:
-            parts = existing["version"].split(".")
-            parts[-1] = str(int(parts[-1]) + 1)
-            new_version = ".".join(parts)
-            conn.execute(
-                "UPDATE skills_index SET version=?, usage_count=?, updated_at=datetime('now') WHERE id=?",
-                (new_version, existing["usage_count"] + 1, existing["id"]),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO skills_index (name, description, file_path, version) VALUES (?, ?, ?, '1.0.0')",
-                (name, desc, str(file_path)),
-            )
+            if existing:
+                parts = existing["version"].split(".")
+                parts[-1] = str(int(parts[-1]) + 1)
+                new_version = ".".join(parts)
+                conn.execute(
+                    "UPDATE skills_index SET version=?, usage_count=?, updated_at=datetime('now') WHERE id=?",
+                    (new_version, existing["usage_count"] + 1, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO skills_index (name, description, file_path, version) VALUES (?, ?, ?, '1.0.0')",
+                    (name, desc, str(file_path)),
+                )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
         print(f"  [autoskill] skill '{name}' saved ({'updated' if existing else 'new'})")
 
         # Sync to Kimi remote memory (best-effort)
@@ -509,7 +502,6 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
             ],
             response_format={"type": "json_object"},
             max_tokens=512,
-            extra_body={"thinking": {"type": "disabled"}},
         )
         content = resp.choices[0].message.content
         if not content:
@@ -522,15 +514,14 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
             print(f"  [reflection] raw preview: {content[:120]}...")
             result = _repair_json(content)
 
-        conn = _get_db()
-        conn.execute(
-            "INSERT INTO reflections (task, failure_reason, fix_suggestion, tool_trace, tokens) VALUES (?, ?, ?, ?, ?)",
-            (task[:200], result.get("reason", content[:200]), result.get("fix", "see trace"),
-             json.dumps(tool_log[-20:], ensure_ascii=False),
-             tokens.get("total", 0)),
-        )
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO reflections (task, failure_reason, fix_suggestion, tool_trace, tokens) VALUES (?, ?, ?, ?, ?)",
+                (task[:200], result.get("reason", content[:200]), result.get("fix", "see trace"),
+                 json.dumps(tool_log[-20:], ensure_ascii=False),
+                 tokens.get("total", 0)),
+            )
+            conn.commit()
         print(f"  [reflection] failure analyzed: {result.get('reason', content)[:80]}")
 
     except Exception as e:
@@ -544,73 +535,69 @@ def save_pending(task: str, reason: str, tool_log: list[str]):
     if not _cfg("pending_enabled", True):
         return
     try:
-        conn = _get_db()
-        conn.execute(
-            "INSERT INTO pending_learning (task, reason, traces_json) VALUES (?, ?, ?)",
-            (task[:200], reason, json.dumps(tool_log, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO pending_learning (task, reason, traces_json) VALUES (?, ?, ?)",
+                (task[:200], reason, json.dumps(tool_log, ensure_ascii=False)),
+            )
+            conn.commit()
     except Exception:
         pass  # Best-effort
 
 
 def settle_pending(client, model: str):
     """Attempt to settle pending interrupted tasks."""
-    conn = _get_db()
-    pending = conn.execute(
-        "SELECT * FROM pending_learning WHERE settled = 0 ORDER BY created_at LIMIT 5"
-    ).fetchall()
+    with _db() as conn:
+        pending = conn.execute(
+            "SELECT * FROM pending_learning WHERE settled = 0 ORDER BY created_at LIMIT 5"
+        ).fetchall()
 
-    for p in pending:
-        try:
-            traces = json.loads(p["traces_json"])
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "Determine if an interrupted task was completed. Output JSON: {\"completed\": true/false, \"summary\": \"...\"}"},
-                    {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=300,
-                extra_body={"thinking": {"type": "disabled"}},
-            )
-            content = resp.choices[0].message.content
-            if not content:
-                raise ValueError("empty settlement response")
+        for p in pending:
             try:
-                verdict = json.loads(content)
-            except json.JSONDecodeError as e:
-                print(f"  [settle] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
-                verdict = _repair_json(content)
+                traces = json.loads(p["traces_json"])
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "Determine if an interrupted task was completed. Output JSON: {\"completed\": true/false, \"summary\": \"...\"}"},
+                        {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=300,
+                        )
+                content = resp.choices[0].message.content
+                if not content:
+                    raise ValueError("empty settlement response")
+                try:
+                    verdict = json.loads(content)
+                except json.JSONDecodeError as e:
+                    print(f"  [settle] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
+                    verdict = _repair_json(content)
 
-            if verdict.get("completed"):
-                report = {"success": True, "summary": verdict["summary"], "steps": []}
-                autoskill_learn(p["task"], report, traces, client, model)
-            else:
-                report = {"success": False, "summary": verdict["summary"], "steps": []}
-                reflect_failure(p["task"], report, traces, client, model)
+                if verdict.get("completed"):
+                    report = {"success": True, "summary": verdict["summary"], "steps": []}
+                    autoskill_learn(p["task"], report, traces, client, model)
+                else:
+                    report = {"success": False, "summary": verdict["summary"], "steps": []}
+                    reflect_failure(p["task"], report, traces, client, model)
 
-            conn.execute(
-                "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
-                (p["id"],),
-            )
-            conn.commit()
-            print(f"  [settle] pending task #{p['id']} settled: completed={verdict['completed']}")
-
-        except Exception:
-            max_retries = _cfg("pending_max_retries", 3)
-            retries = _settle_retries.get(p["id"], 0)
-            retries += 1
-            _settle_retries[p["id"]] = retries
-            if retries >= max_retries:
                 conn.execute(
                     "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
                     (p["id"],),
                 )
                 conn.commit()
+                print(f"  [settle] pending task #{p['id']} settled: completed={verdict['completed']}")
 
-    conn.close()
+            except Exception:
+                max_retries = _cfg("pending_max_retries", 3)
+                retries = _settle_retries.get(p["id"], 0)
+                retries += 1
+                _settle_retries[p["id"]] = retries
+                if retries >= max_retries:
+                    conn.execute(
+                        "UPDATE pending_learning SET settled=1, settled_at=datetime('now') WHERE id=?",
+                        (p["id"],),
+                    )
+                    conn.commit()
 
 
 # --- Unified API ---
@@ -626,19 +613,18 @@ def reflect_and_learn(task: str, report: dict, tool_log: list[str], client, mode
 
 def get_learnings_prompt() -> str:
     """Build learnings prompt from both learnings table and reflections."""
-    conn = _get_db()
-    max_learnings = _cfg("learnings_max_prompt", 10)
-    max_reflections = _cfg("reflection_max_prompt", 5)
-    recent_learnings = conn.execute(
-        "SELECT * FROM learnings ORDER BY created_at DESC LIMIT ?", (max_learnings,)
-    ).fetchall()
-    recent_reflections = conn.execute(
-        "SELECT * FROM reflections ORDER BY created_at DESC LIMIT ?", (max_reflections,)
-    ).fetchall()
-    recent_skills = conn.execute(
-        "SELECT name, description, file_path FROM skills_index ORDER BY usage_count DESC LIMIT 5"
-    ).fetchall()
-    conn.close()
+    with _db() as conn:
+        max_learnings = _cfg("learnings_max_prompt", 10)
+        max_reflections = _cfg("reflection_max_prompt", 5)
+        recent_learnings = conn.execute(
+            "SELECT * FROM learnings ORDER BY created_at DESC LIMIT ?", (max_learnings,)
+        ).fetchall()
+        recent_reflections = conn.execute(
+            "SELECT * FROM reflections ORDER BY created_at DESC LIMIT ?", (max_reflections,)
+        ).fetchall()
+        recent_skills = conn.execute(
+            "SELECT name, description, file_path FROM skills_index ORDER BY usage_count DESC LIMIT 5"
+        ).fetchall()
 
     lines = []
     if recent_reflections:

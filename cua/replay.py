@@ -15,12 +15,9 @@ from pathlib import Path
 import numpy as np
 
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
-from cua.overlay import draw_cursor
 
 TRAJ_DIR = Path(__file__).parent / "data" / "trajectories"
 TRAJ_DIR.mkdir(parents=True, exist_ok=True)
-
-SIMILARITY_REPLAY_THRESHOLD = 0.70  # Only consider replay above this similarity
 
 
 def _safe_json(content: str) -> dict:
@@ -162,7 +159,6 @@ def _clean_trajectory(task: str, steps: list, client, model: str) -> list:
                 {"role": "user", "content": content_blocks},
             ],
             response_format={"type": "json_object"},
-            extra_body={"thinking": {"type": "disabled"}},
         )
         result = _safe_json(resp.choices[0].message.content)
         keep = result.get("keep", [])
@@ -217,7 +213,6 @@ def _decide_trajectory_action(task: str, summary: str, new_steps: list,
                 )},
             ],
             response_format={"type": "json_object"},
-            extra_body={"thinking": {"type": "disabled"}},
         )
         result = _safe_json(resp.choices[0].message.content)
         action = result.get("action", "save_new")
@@ -309,7 +304,6 @@ def find_trajectory(task_summary: str) -> dict | None:
         return None
 
     try:
-        from cua.learning import _get_skills_collection
         # Use a temp collection for trajectory search
         import chromadb
         client = chromadb.Client(settings=chromadb.Settings(
@@ -368,7 +362,6 @@ def evaluate_replay(task: str, similar_text: str, traj_tool_names: list[str],
                 ]},
             ],
             response_format={"type": "json_object"},
-            extra_body={"thinking": {"type": "disabled"}},
         )
         return _safe_json(resp.choices[0].message.content)
     except Exception as e:
@@ -408,7 +401,6 @@ def verify_step(step: dict, current_screenshot: np.ndarray,
             ],
             response_format={"type": "json_object"},
             max_tokens=150,
-            extra_body={"thinking": {"type": "disabled"}},
         )
         return _safe_json(resp.choices[0].message.content)
     except Exception as e:
@@ -431,7 +423,6 @@ def attempt_replay(traj: dict, task: str, similar_text: str,
         return {"replayed": False, "abort_reason": "Empty trajectory"}
 
     # Step 1: Judge
-    import mss as _mss_module
     current = np.array(sct.grab(sct.monitors[1]))
     current_b64 = _np_to_png_b64(
         downsample_for_vlm(current, mouse_pos, screen_w, screen_h)[0][..., [2, 1, 0]]

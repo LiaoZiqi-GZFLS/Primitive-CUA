@@ -1,5 +1,4 @@
 """Tool registry: collects all tool schemas and routes execution."""
-import json
 from typing import Any
 
 from cua.tools.screenshot import SCREENSHOT_SCHEMA, execute_screenshot
