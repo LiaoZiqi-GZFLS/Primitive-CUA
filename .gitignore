@@ -4,6 +4,10 @@ cua/config.yaml
 # CUA runtime data (SQLite, ChromaDB, cache)
 cua/data/
 
+# UIA test output
+uia_before.txt
+uia_after.txt
+
 # Superpowers brainstorm state
 .superpowers/
 

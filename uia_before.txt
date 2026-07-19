@@ -1,8 +1,0 @@
-Window: 微信 (WindowControl)
-WindowControl '微信'
-  PaneControl
-  PaneControl '微信'
-    PaneControl '微信'
-      PaneControl
-        PaneControl
-        PaneControl
