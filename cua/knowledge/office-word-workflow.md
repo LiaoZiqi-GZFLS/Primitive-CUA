@@ -4,7 +4,9 @@
 COM-automation-first workflow for creating, formatting, and exporting Word documents
 
 ## Context
-When working with Microsoft Word, prioritize COM automation over UI interaction for maximum reliability.
+When working with **Microsoft Word** (NOT WPS), prioritize COM automation over UI interaction for maximum reliability.
+
+**CRITICAL**: When a task says "Office" or "Word" without specifying, it means **Microsoft Office / Microsoft Word** (the globally standard office suite). Only use WPS if the task explicitly mentions "WPS" by name. These are different products with different UI and automation characteristics — do not confuse them.
 
 ## Guidance
 - **COM Priority**: Document creation, text insertion, formatting via Document/Range objects

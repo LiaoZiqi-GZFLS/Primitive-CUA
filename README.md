@@ -5,16 +5,14 @@ A Computer Use Agent (CUA) that controls Windows desktop through tool-calling. U
 ## Architecture
 
 ```
-User Task → Dynamic Tool Loader (LLM classification)
-                ↓
-         Agent Loop → Kimi K3 API
+User Task → Agent Loop → Kimi K3 API (47 tools, native tool selection)
                 ↕
-        47 Tools (desktop, web, UIA, clipboard, document, memory, subagents)
+        Desktop, Web, UIA, Clipboard, Document, Memory, Subagents
                 ↓
          Post-task Learning (AutoSkill / Reflection / Pending)
 ```
 
-The agent receives a task, classifies it to load only relevant tools, takes a screenshot, and enters a tool-calling loop: the model sees the screen → decides what action to take → calls tools → receives results → repeats until done.
+The agent receives a task, takes a screenshot, and enters a tool-calling loop: the model sees the screen → decides what action to take → calls tools → receives results → repeats until done. All 47 tools are sent to K3 on every request, leveraging K3's 1M context and auto-caching for native tool selection.
 
 ## Quick Start
 
@@ -69,7 +67,7 @@ max_iterations: 50                # Max tool-calling iterations per task
 - **K3 always thinking**: K3 always produces reasoning; `reasoning_effort="max"` is default. No `thinking=disabled` needed.
 - **PNG base64**: Screenshots tiered downscaled then PNG-encoded (≤2K keep, 4K→2K, 4K+→4K)
 - **Normalized coordinates**: Mouse positions use [0,1] range with 4 decimal places
-- **Dynamic tool loading**: LLM classifies task → loads only relevant tool groups (40+ tools available)
+- **Native tool selection**: All 47 tools always sent to K3; model selects tools natively via its 1M context (auto-cached after first request)
 - **Learning system**: Success → AutoSkill, Failure → Reflection, Interrupted → Pending settlement
 - **No context between rounds**: Each CLI task builds a fresh `messages` list
 

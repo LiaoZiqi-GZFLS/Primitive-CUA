@@ -44,70 +44,82 @@ PERCEPTION_TOOLS = {
 }
 
 
-SYSTEM_PROMPT = """You are a Computer Use Agent (CUA). You control a Windows desktop by calling tools. You operate in a tool-calling loop: you see screenshots, call tools to act, receive new screenshots, and continue until the task is done.
-
-## Tools
-
-- **screenshot**: Full-screen capture. Returns original image + annotated version with virtual mouse cursor (red crosshair + circle).
-- **set_mouse(x, y)**: Move virtual mouse to normalized coordinates (0.0-1.0, 4 decimal places).
-- **click(button, type, count, scroll)**: Click at current mouse position. button: left/right/middle. type: single/double. count: number of clicks. scroll: positive=up, negative=down.
-- **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another.
-- **scroll(x, y, direction, amount?)**: Scroll at a position. direction: up/down/pageup/pagedown. amount for up/down (default 3).
-- **type_keys(keys, repeat?)**: Keyboard shortcuts and special keys ONLY ("ctrl+c", "enter", "tab", "escape", "backspace", "delete", "f5", "alt+tab", "win+r"). Use repeat=N for multiple presses (e.g. "backspace" repeat=10). DO NOT use for typing text — use paste_text for ALL text input.
-- **magnifier**: Square crop centered on cursor, side = half the shorter screen edge. Use for fine details.
-- **ocr**: Run OCR on the current screenshot. Returns text blocks with positions and confidence.
-- **web_search(query)**: Search the web via Kimi built-in search (may be unreliable on K3 — prefer web_navigate for web tasks).
-- **read_clipboard**: Read text content from the system clipboard. Use to check what was copied.
-- **paste_text(text)**: THE primary text input method. Copies text to clipboard → Ctrl+V. Works for ALL text: Chinese, English, emoji, code, long paragraphs. Use this for EVERY text input. Only use type_keys for keyboard shortcuts, never for content.
-- **think**: Pause to reflect on progress and plan next steps. Use when you're stuck, unsure, or need to strategize. Does NOT perform any action — it gives you space to think before your next move.
-- **list_windows**: List all open windows with titles, positions, visibility. Use this FIRST for any desktop task — find the target window before acting. Essential for Office, dialogs, and native apps.
-- **focus_window(title)**: Bring a window to front by matching its title (partial match). Use list_windows first to find the exact title.
-- **launch_app(name)**: Launch via Start menu search (Win key → type/paste name → Enter). Uses paste for Chinese. Only finds apps indexed by Windows Search — if it fails, try opening via taskbar shortcut or desktop icon instead.
-- **wait(seconds)**: Wait for a duration (0.5-10s). Use after launching apps or loading pages instead of repeatedly calling screenshot to check. Saves tokens.
-- **file_read(path)**: Read the contents of a text file. Use to check file content without opening GUI apps.
-- **file_write(path, content)**: Write text content to a file. Creates parent directories automatically. Use for saving output directly instead of GUI save dialogs.
-- **note(text)**: Save a note to your persistent notepad.
-- **DraftContent(task, persona, prefill?, max_chars?)**: Write long-form content (articles, emails, reports) in an isolated writing session with its own persona. Returns file path + preview — use file_read to get full content.
-- **GenerateImage(requirement)**: Generate an SVG image (icon, illustration, diagram). Uses multi-round generation + visual self-review. Returns PNG file path.
-- **ReadDocument(path)**: Upload a file to Kimi and extract its text (PDF, DOCX, images with OCR). Returns a doc:<sha8> reference for DraftContent. Use instead of file_read for non-text files.
-- **ListDocuments / DeleteDocument(ref) / CleanupDocuments**: Manage uploaded files in Kimi cloud (quota: 1000 files). Clean up periodically. Use to remember window positions, icon locations, file paths, or task progress. Notes appear automatically in think(). Call with no text to read all notes.
-- **uia_inspect(depth)**: Inspect the UI control tree of the current foreground window. Shows control names, types, and positions. Essential for Office, native Windows apps, and dialogs with structured UI.
-- **uia_click(name)**: Click a UI control by name (partial match) in the foreground window. Uses UIA Invoke pattern — reliable for buttons, menus, tabs in native apps.
-- **uia_set_value(name, value)**: Set the value of an input/editable control by name. Uses UIA Value pattern for precise text entry in Office and native app fields. Supports Chinese.
-- **uia_get_text(name)**: Read text/value from a control by name. Use to read document content, cell values, status text.
-- **run_command(command)**: Open Windows Run dialog (Win+R), type a command, and press Enter. Use to open paths, launch executables, run shell commands.
-- **web_navigate(url)**: Open a URL directly in the built-in browser. Use this IMMEDIATELY for any web task — no need to open Chrome/Edge on the desktop first. Just call web_navigate("https://...") as your first action.
-- **web_get_content()**: Read the current page — headings, buttons, links, inputs, text. Use this instead of OCR/screenshot for web pages. Much more precise.
-- **web_click(text)**: Click an element on the web page by its visible text. Reliable, no coordinate guessing.
-- **web_type(label, text)**: Type into an input field (matched by placeholder/label). Use for form filling. Press Enter with web_press('Enter') after filling to submit.
-- **web_press(key)**: Press a keyboard key on the page. Use 'Enter' to submit forms, 'Escape' to close modals, 'Tab' to switch focus.
-- **web_scroll(amount)**: Scroll the page. Positive=down, negative=up. Use 500 for a typical scroll.
-- **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Manage browser tabs.
-- **web_refresh / web_back / web_forward**: Page navigation (reload, back, forward).
-- **request_human_help(request)**: Pause and ask the human for assistance. Use for login pages, CAPTCHAs, UAC permission dialogs, or any situation you cannot handle. Describe what you need, wait for the human's response, then continue.
-- **memory(action, key, value?)**: Remote persistent memory across all sessions. Use action='save' to store important findings (window positions, icon locations, successful workflows). Use action='recall' to check if you've solved a similar problem before. Memory is your long-term memory — use it proactively.
-- **rethink(content)**: AI-driven consolidation. Use to summarize and reorganize your accumulated knowledge mid-task — pass your notes and findings for intelligent compression.
-- **finish(success, summary, steps)**: MANDATORY — call this to end the task. You MUST call finish() when the task is complete or cannot proceed. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions taken.
+SYSTEM_PROMPT = """You are a Computer Use Agent (CUA) controlling a Windows desktop through tool calls. Core loop: screenshot → assess → act → verify → repeat → finish().
 
 ## Critical Rules
 
-0. **Use memory proactively**: recall related memories at task start to see if you've done this before. Save key findings during the task (window locations, file paths, successful strategies) — don't wait until finish. Use rethink after accumulating 5+ notes to consolidate.
+1. **ALWAYS end with finish()**: You CANNOT output text directly. The ONLY way to deliver results is finish(success=..., summary=..., steps=[...]). Call finish() when done, stuck, or the task is impossible. Never output a text summary without finish().
 
-1. **ALWAYS end with finish()**: You are in a tool-calling loop. You CANNOT output text directly as a final response. The ONLY way to communicate your final result to the user is by calling the finish() tool. If the task is done, call finish(). If you're stuck or the task is impossible, call finish(success=false, ...). Never output a text summary without also calling finish().
+2. **Act, don't describe**: Call tools directly — one action per turn. Briefly explain your reasoning in each tool call's content field, but don't narrate a plan without acting.
 
-2. **Act, don't describe**: Don't tell me what you plan to do — just call the tool. Take one action at a time, observe the result, then take the next action. However, when you call a tool, briefly explain your reasoning in the content field — what you're doing and why.
+3. **paste_text for ALL text input**: Use paste_text(text) for Chinese, English, code, URLs, file names — everything. type_keys is ONLY for keyboard shortcuts (ctrl+c, alt+tab, enter, escape) and special keys (tab, f5, backspace). Never use type_keys to type words. If clipboard paste is blocked, try uia_set_value first, then type_keys as last resort.
 
-3. **verify parameter**: All action tools accept an optional verify boolean (default true). Set verify=false for rapid multi-step sequences to skip the before/after screenshot comparison — think() is still injected after every action regardless. Only use verify=false for fast consecutive operations; use verify=true (or omit) for normal use.
+4. **Web tasks → web tools DIRECTLY**: For ANY browser-based task, call web_navigate(url) as your first action. Do NOT open a desktop browser — web tools run their own. Workflow: web_navigate → web_get_content → web_click/web_type/web_press. You never need desktop tools for web pages.
 
-4. **Coordinates**: (0,0)=top-left, (1,1)=bottom-right. Use exactly 4 decimal places. The annotated screenshot shows WHERE the cursor currently is with a red crosshair. To click something: FIRST set_mouse() to position the cursor, THEN click().
+5. **Native apps → structured tools FIRST**: For Microsoft Office (Word, Excel, PowerPoint) and native Windows apps: list_windows → focus_window → uia_inspect → uia_click/uia_set_value/uia_get_text. Only fall back to screenshot + coordinate clicking when UIA tools can't access the target. Note: "Office" in Chinese contexts usually means Microsoft Office. WPS is a separate product — only use it if the task explicitly mentions WPS.
 
-5. **Web tasks = use web tools DIRECTLY**: If the task involves visiting a website, searching the web, reading online content, filling web forms, or ANY browser-based action, use web_navigate(url) IMMEDIATELY as your first action. Do NOT open a desktop browser, do NOT click the taskbar, do NOT use screenshot for web pages. The web tools run in their own browser — just call web_navigate("https://...") and then web_get_content() to see the page. The workflow is: web_navigate → web_get_content → web_click/web_type/web_press. You never need desktop tools for web tasks.
+6. **Verify state-changing actions**: Most action tools accept an optional `verify` boolean (default true). When enabled, BEFORE/AFTER screenshots are compared to confirm the action's effect. Set verify=false only for rapid multi-step sequences. think() is always injected after every action.
 
-6. **ALL text input goes through paste**: paste_text is your default for any text — Chinese, English, code, URLs, file names, everything. type_keys is ONLY for keyboard shortcuts (ctrl+c, alt+tab, win+r) and special keys (enter, escape, tab, f5). If you catch yourself calling type_keys to type words, stop — use paste_text instead. The only exception is apps that block clipboard paste (rare); in that case, try uia_set_value first, then type_keys as last resort.
+7. **Coordinates**: (0,0)=top-left, (1,1)=bottom-right. Use exactly 4 decimal places. The annotated screenshot shows the current cursor position (red crosshair). To click: set_mouse() first, then click().
 
-7. **Prefer structured tools over coordinate clicking**: For Office apps (Word, Excel, PowerPoint), Windows native dialogs, use structured tools FIRST. Best workflow: list_windows → focus_window → uia_inspect → uia_click/uia_set_value/uia_get_text. Only fall back to screenshot+set_mouse+click when structured tools can't access the target element.
+8. **Use memory proactively**: Recall related memories at task start with memory(action='recall'). Save key findings during the task — don't wait until finish. Use rethink() after accumulating 5+ notes to consolidate. Use note() for quick persistent notes.
 
-8. **Keep trying**: If one approach fails, try another. Use ocr and magnifier to understand what's on screen."""
+9. **Keep trying**: If one approach fails, try another. Use ocr() and magnifier() to inspect the screen. Call request_human_help() for logins, CAPTCHAs, or UAC dialogs.
+
+## Tools
+
+### Desktop Interaction
+- **screenshot**: Full-screen capture with virtual cursor overlay (red crosshair + circle). Always call first to assess state.
+- **set_mouse(x, y)**: Move cursor to normalized coordinates (0.0-1.0).
+- **click(button, type, count, scroll)**: Click at cursor position. button: left/right/middle. type: single/double. scroll: positive=up, negative=down.
+- **drag(from_x, from_y, to_x, to_y)**: Drag from one position to another.
+- **scroll(x, y, direction, amount)**: Scroll at position. direction: up/down/pageup/pagedown.
+- **type_keys(keys, repeat)**: Keyboard shortcuts ONLY. For text input, use paste_text instead.
+- **paste_text(text)**: Copy text to clipboard → Ctrl+V. Primary text input for ALL content types.
+- **magnifier**: Square crop centered on cursor for fine-detail inspection.
+- **ocr**: Extract text from current screenshot with positions and confidence scores.
+- **read_clipboard**: Read system clipboard content.
+- **wait(seconds)**: Wait 0.5-10s. Use after launching apps instead of repeated screenshots.
+
+### Windows Management
+- **list_windows**: List all open windows (titles, positions, visibility). Use FIRST for any desktop task.
+- **focus_window(title)**: Bring window to front by title (partial match). Use list_windows first.
+- **launch_app(name)**: Launch via Start menu search (Win → type name → Enter). Only finds apps indexed by Windows Search. For "Office" tasks, launch "Microsoft Word/Excel/PowerPoint" unless the task explicitly says WPS. ⚠️ If the app is not installed, Windows will fall back to a Bing search in Edge — check list_windows() after launching to confirm the app actually opened.
+
+### Web Browser (Playwright)
+- **web_navigate(url)**: Open URL in built-in browser. Use IMMEDIATELY for any web task.
+- **web_get_content()**: Read page structure — headings, buttons, links, inputs, text. More precise than OCR.
+- **web_click(text)**: Click element by visible text. No coordinate guessing needed.
+- **web_type(label, text)**: Type into input field matched by placeholder/label.
+- **web_press(key)**: Press key on page (Enter to submit, Escape to close modals, Tab to switch focus).
+- **web_scroll(amount)**: Scroll page. Positive=down, negative=up. Use ~500 for a typical scroll.
+- **web_new_tab / web_switch_tab(index) / web_close_tab / web_list_tabs**: Tab management.
+- **web_refresh / web_back / web_forward**: Page navigation.
+
+### Native App Automation (UIA)
+- **uia_inspect(depth)**: Inspect UI control tree of foreground window (names, types, positions).
+- **uia_click(name)**: Click control by name (partial match). Reliable for buttons, menus, tabs.
+- **uia_set_value(name, value)**: Set value of input control by name. Supports Chinese.
+- **uia_get_text(name)**: Read text/value from a control by name.
+- **run_command(command)**: Win+R → type command → Enter. For paths, executables, shell commands.
+
+### Files & Documents
+- **file_read(path)**: Read text file. Use instead of GUI to check file content.
+- **file_write(path, content)**: Write text to file. Creates parent directories.
+- **ReadDocument(path)**: Upload to Kimi and extract text (PDF, DOCX, images). Returns doc:<sha8> reference.
+- **ListDocuments / DeleteDocument(ref) / CleanupDocuments**: Manage uploaded Kimi files (quota: 1000).
+
+### Memory & Knowledge
+- **note(text)**: Save to persistent notepad. Notes appear automatically in think(). No-arg call reads all notes.
+- **memory(action, key, value)**: Remote persistent KV store across sessions. action: save/recall.
+- **rethink(content)**: AI-driven consolidation of accumulated notes and findings.
+- **DraftContent(task, persona, prefill, max_chars)**: Write long-form content in isolated session with own persona. Returns file path + preview — use file_read for full content.
+- **GenerateImage(requirement)**: Generate SVG image via multi-round generation + visual self-review. Returns PNG path.
+
+### Meta
+- **think()**: Pause to reflect and plan next steps. Use when stuck, unsure, or after completing a sub-task. Does NOT perform actions — gives you space to think.
+- **finish(success, summary, steps)**: MANDATORY. End the task. success: true/false. summary: what was accomplished or why it failed. steps: ordered list of key actions.
+- **request_human_help(request)**: Pause for human assistance. Use for logins, CAPTCHAs, UAC dialogs."""
 
 
 def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
@@ -436,6 +448,12 @@ def run_task(task: str, config: dict | None = None) -> dict:
     similar_text = _search_similar(task[:80])
     set_think_context(similar_text)
 
+    # Search knowledge base for relevant manual guidance
+    from cua.learning import search_knowledge
+    knowledge_text = search_knowledge(task[:80])
+    if knowledge_text:
+        print(f"  [knowledge] task-start search: {len(knowledge_text.splitlines())} hits")
+
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0   # how many action-rounds have been compressed so far
     _total_action_count = 0  # cumulative count, never decremented by cleanup
@@ -457,7 +475,10 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
         # Initialize messages early (needed by replay failure handler)
         learnings_text = get_learnings_prompt()
-        system_content = SYSTEM_PROMPT + learnings_text
+        knowledge_section = ""
+        if knowledge_text:
+            knowledge_section = f"\n## Relevant Knowledge Base Guidance\n\n{knowledge_text}\n"
+        system_content = SYSTEM_PROMPT + learnings_text + knowledge_section
         messages = [{"role": "system", "content": system_content}]
 
         # Check for trajectory replay opportunity
@@ -520,487 +541,500 @@ def run_task(task: str, config: dict | None = None) -> dict:
             "content": _build_initial_content(task, mouse_pos, screen_w, screen_h),
         })
 
-        for iteration in range(max_iterations):
-            # Near the limit, inject a strong reminder
-            if iteration == max_iterations - 3:
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You have only a few iterations remaining. If the task is done "
-                        "or you cannot proceed further, call finish() NOW. "
-                        "You MUST use the finish tool — do not output text."
-                    ),
-                })
-
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=active_tools,
-                    max_completion_tokens=max_tokens,
-                    reasoning_effort="max",
-                )
-            except openai.AuthenticationError:
-                raise  # Auth errors are not retryable
-            except Exception as e:
-                print(f"  API error (retrying in 2s): {e}")
-                time.sleep(2)
-                continue
-
-            if hasattr(response, "usage") and response.usage:
-                token_usage["prompt"] += response.usage.prompt_tokens or 0
-                token_usage["completion"] += response.usage.completion_tokens or 0
-                token_usage["total"] += response.usage.total_tokens or 0
-
-            choice = response.choices[0]
-            msg = choice.message
-
-            if msg.content and not msg.tool_calls:
-                # Model output text without calling a tool — likely a summary.
-                # Remind it to use finish() to properly end the task.
-                print(f"  [text response, nudging to call finish]")
-                # K3: preserve reasoning_content in text-only responses too
-                text_msg = {"role": "assistant", "content": msg.content}
-                if getattr(msg, "reasoning_content", None):
-                    text_msg["reasoning_content"] = msg.reasoning_content
-                messages.append(text_msg)
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You output text without calling a tool. Remember: you MUST call "
-                        "the finish() tool to end the task. If the task is complete, call "
-                        "finish(success=true, summary='...', steps=[...]) now. "
-                        "If you cannot complete the task, call finish(success=false, ...). "
-                        "Do not output text — call the finish tool."
-                    ),
-                })
-                continue
-
-            if not msg.tool_calls:
-                continue
-
-            # K3: MUST preserve complete assistant message including reasoning_content.
-            # Use model_dump() to capture all fields the API returns.
-            try:
-                assistant_msg = msg.model_dump(exclude_none=True)
-            except Exception:
-                # Fallback: manual reconstruction with reasoning_content
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-                if getattr(msg, "reasoning_content", None):
-                    assistant_msg["reasoning_content"] = msg.reasoning_content
-            messages.append(assistant_msg)
-
-            # Show model's reasoning before tool calls
-            if msg.content:
-                print(f"  💭 {msg.content}")
-
-            for tc in msg.tool_calls:
-                name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-
-                args_str = json.dumps(args, ensure_ascii=False)
-                if len(args_str) > 120:
-                    args_str = args_str[:117] + "..."
-                print(f"  [{name}] {args_str}")
-                _current_tool_log.append(f"[{name}] {args_str}")
-
-                # Record step (only save screenshots for action tools)
-                save_screenshot = (name in VERIFY_TOOLS)
-                recorder.record_step(name, args, img, screen_w, screen_h, mouse_pos, save_screenshot=save_screenshot)
-
-                # Save before-screenshot for verify step
-                img_before = img.copy() if name in VERIFY_TOOLS else None
-
-                # Before perception tools, sync physical cursor to virtual position
-                if name in PERCEPTION_TOOLS:
-                    import pyautogui
-                    px = round(mouse_pos[0] * screen_w)
-                    py = round(mouse_pos[1] * screen_h)
-                    pyautogui.moveTo(px, py)
-
-                try:
-                    result = execute_tool(
-                        name, args, sct, mouse_pos, screen_w, screen_h, img
-                    )
-                except Exception as e:
-                    print(f"  Tool error: {e}")
-                    result = {
-                        "content": [{"type": "text", "text": f"Tool error: {e}"}],
-                        "mouse_pos": None,
-                        "last_screenshot": img,
-                    }
-
-                if result.get("mouse_pos") is not None:
-                    mouse_pos = result["mouse_pos"]
-                if result.get("last_screenshot") is not None:
-                    img = result["last_screenshot"]
-
-                if name == "finish" and "_finish_report" in result:
-                    result["_finish_report"]["tokens"] = token_usage
-                    result["_finish_report"]["_tool_calls_log"] = _current_tool_log
-
-                    # Save trajectory for future replay
-                    success = result["_finish_report"].get("success", False)
-                    action_steps = sum(1 for s in recorder.steps if s.get("screenshot_b64") and len(s["screenshot_b64"]) > 100)
-                    print(f"  [replay] finished: success={success}, action_steps={action_steps}/{len(recorder.steps)}")
-                    if success:
-                        try:
-                            traj_id = recorder.save(
-                                task_summary=task[:80],
-                                client=client, model=model,
-                            )
-                            if traj_id:
-                                print(f"  [replay] trajectory saved: {traj_id}")
-                            else:
-                                print(f"  [replay] trajectory skipped: need >=1 action step with screenshot")
-                        except Exception as e:
-                            print(f"  [replay] trajectory save failed: {e}")
-
-                    return result["_finish_report"]
-
-                content_items = result["content"]
-                text_items = []
-                image_items = []
-                for item in content_items:
-                    if item.get("type") == "image_url":
-                        image_items.append(item)
-                    else:
-                        text_items.append(item)
-
-                tool_text = " ".join(
-                    item.get("text", "") for item in text_items
-                )
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": name,
-                    "content": tool_text,
-                })
-
-                if image_items:
-                    user_content = image_items + [
-                        {"type": "text", "text": f"After {name}: {tool_text}"}
-                    ]
+        while True:
+            for iteration in range(max_iterations):
+                # Near the limit, inject a strong reminder
+                if iteration == max_iterations - 3:
                     messages.append({
                         "role": "user",
-                        "content": user_content,
+                        "content": (
+                            "You have only a few iterations remaining. If the task is done "
+                            "or you cannot proceed further, call finish() NOW. "
+                            "You MUST use the finish tool — do not output text."
+                        ),
                     })
-
-                # OCR cleaning: after screenshot, refine OCR with context-aware LLM
-                if name == "screenshot":
-                    print(f"  [ocr-clean] refining OCR with context...")
+    
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=active_tools,
+                        max_completion_tokens=max_tokens,
+                        reasoning_effort="max",
+                    )
+                except openai.AuthenticationError:
+                    raise  # Auth errors are not retryable
+                except Exception as e:
+                    print(f"  API error (retrying in 2s): {e}")
+                    time.sleep(2)
+                    continue
+    
+                if hasattr(response, "usage") and response.usage:
+                    token_usage["prompt"] += response.usage.prompt_tokens or 0
+                    token_usage["completion"] += response.usage.completion_tokens or 0
+                    token_usage["total"] += response.usage.total_tokens or 0
+    
+                choice = response.choices[0]
+                msg = choice.message
+    
+                if msg.content and not msg.tool_calls:
+                    # Model output text without calling a tool — likely a summary.
+                    # Remind it to use finish() to properly end the task.
+                    print(f"  [text response, nudging to call finish]")
+                    # K3: preserve reasoning_content in text-only responses too
+                    text_msg = {"role": "assistant", "content": msg.content}
+                    if getattr(msg, "reasoning_content", None):
+                        text_msg["reasoning_content"] = msg.reasoning_content
+                    messages.append(text_msg)
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You output text without calling a tool. Remember: you MUST call "
+                            "the finish() tool to end the task. If the task is complete, call "
+                            "finish(success=true, summary='...', steps=[...]) now. "
+                            "If you cannot complete the task, call finish(success=false, ...). "
+                            "Do not output text — call the finish tool."
+                        ),
+                    })
+                    continue
+    
+                if not msg.tool_calls:
+                    continue
+    
+                # K3: MUST preserve complete assistant message including reasoning_content.
+                # Use model_dump() to capture all fields the API returns.
+                try:
+                    assistant_msg = msg.model_dump(exclude_none=True)
+                except Exception:
+                    # Fallback: manual reconstruction with reasoning_content
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": msg.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ],
+                    }
+                    if getattr(msg, "reasoning_content", None):
+                        assistant_msg["reasoning_content"] = msg.reasoning_content
+                messages.append(assistant_msg)
+    
+                # Show model's reasoning before tool calls
+                if msg.content:
+                    print(f"  💭 {msg.content}")
+    
+                for tc in msg.tool_calls:
+                    name = tc.function.name
                     try:
-                        # Extract raw OCR text from the tool result
-                        raw_ocr = ""
-                        for item in result["content"]:
-                            if item.get("type") == "text":
-                                raw_ocr = item.get("text", "")
-                                break
-
-                        # Scan for latest awareness tool results
-                        latest_windows = "(no list_windows result yet)"
-                        latest_web = "(no web_get_content result yet)"
-                        latest_tabs = "(no web_list_tabs result yet)"
-                        for m in reversed(messages):
-                            if m["role"] == "tool":
-                                n = m.get("name", "")
-                                if n == "list_windows" and latest_windows.startswith("(no"):
-                                    latest_windows = m.get("content", "")
-                                elif n == "web_get_content" and latest_web.startswith("(no"):
-                                    latest_web = m.get("content", "")
-                                elif n == "web_list_tabs" and latest_tabs.startswith("(no"):
-                                    latest_tabs = m.get("content", "")
-
-                        # Build UIA tree with content
-                        uia_tree = "(UIA inspection not available)"
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        args = {}
+    
+                    args_str = json.dumps(args, ensure_ascii=False)
+                    if len(args_str) > 120:
+                        args_str = args_str[:117] + "..."
+                    print(f"  [{name}] {args_str}")
+                    _current_tool_log.append(f"[{name}] {args_str}")
+    
+                    # Record step (only save screenshots for action tools)
+                    save_screenshot = (name in VERIFY_TOOLS)
+                    recorder.record_step(name, args, img, screen_w, screen_h, mouse_pos, save_screenshot=save_screenshot)
+    
+                    # Save before-screenshot for verify step
+                    img_before = img.copy() if name in VERIFY_TOOLS else None
+    
+                    # Before perception tools, sync physical cursor to virtual position
+                    if name in PERCEPTION_TOOLS:
+                        import pyautogui
+                        px = round(mouse_pos[0] * screen_w)
+                        py = round(mouse_pos[1] * screen_h)
+                        pyautogui.moveTo(px, py)
+    
+                    try:
+                        result = execute_tool(
+                            name, args, sct, mouse_pos, screen_w, screen_h, img
+                        )
+                    except Exception as e:
+                        print(f"  Tool error: {e}")
+                        result = {
+                            "content": [{"type": "text", "text": f"Tool error: {e}"}],
+                            "mouse_pos": None,
+                            "last_screenshot": img,
+                        }
+    
+                    if result.get("mouse_pos") is not None:
+                        mouse_pos = result["mouse_pos"]
+                    if result.get("last_screenshot") is not None:
+                        img = result["last_screenshot"]
+    
+                    if name == "finish" and "_finish_report" in result:
+                        result["_finish_report"]["tokens"] = token_usage
+                        result["_finish_report"]["_tool_calls_log"] = _current_tool_log
+    
+                        # Save trajectory for future replay
+                        success = result["_finish_report"].get("success", False)
+                        action_steps = sum(1 for s in recorder.steps if s.get("screenshot_b64") and len(s["screenshot_b64"]) > 100)
+                        print(f"  [replay] finished: success={success}, action_steps={action_steps}/{len(recorder.steps)}")
+                        if success:
+                            try:
+                                traj_id = recorder.save(
+                                    task_summary=task[:80],
+                                    client=client, model=model,
+                                )
+                                if traj_id:
+                                    print(f"  [replay] trajectory saved: {traj_id}")
+                                else:
+                                    print(f"  [replay] trajectory skipped: need >=1 action step with screenshot")
+                            except Exception as e:
+                                print(f"  [replay] trajectory save failed: {e}")
+    
+                        return result["_finish_report"]
+    
+                    content_items = result["content"]
+                    text_items = []
+                    image_items = []
+                    for item in content_items:
+                        if item.get("type") == "image_url":
+                            image_items.append(item)
+                        else:
+                            text_items.append(item)
+    
+                    tool_text = " ".join(
+                        item.get("text", "") for item in text_items
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": name,
+                        "content": tool_text,
+                    })
+    
+                    if image_items:
+                        user_content = image_items + [
+                            {"type": "text", "text": f"After {name}: {tool_text}"}
+                        ]
+                        messages.append({
+                            "role": "user",
+                            "content": user_content,
+                        })
+    
+                    # OCR cleaning: after screenshot, refine OCR with context-aware LLM
+                    if name == "screenshot":
+                        print(f"  [ocr-clean] refining OCR with context...")
                         try:
-                            from cua.tools.uia import _foreground_control
-                            fg = _foreground_control()
-                            if fg is not None:
-                                uia_lines = []
-
-                                def _build_uia_tree(ctrl, depth=0, max_depth=3):
-                                    if depth > max_depth:
-                                        return
-                                    indent = "  " * depth
-                                    name = ctrl.Name or ""
-                                    ctype = ctrl.ControlTypeName
-                                    auto_id = ctrl.AutomationId or ""
-
-                                    # Try to read value for editable/text controls
-                                    value = ""
-                                    if name and ctype in ("Edit", "Document", "Text", "DataItem"):
-                                        try:
-                                            vp = ctrl.GetValuePattern()
-                                            if vp.Value:
-                                                value = f' = "{vp.Value[:60]}"'
-                                        except Exception:
-                                            pass
-
-                                    label = f"{indent}{ctype}"
-                                    if name:
-                                        label += f" '{name}'"
-                                    if auto_id:
-                                        label += f" #{auto_id}"
-                                    if value:
-                                        label += value
-
-                                    rect = ctrl.BoundingRectangle
-                                    if rect and rect.width() > 0:
-                                        label += f" ({rect.left}, {rect.top})"
-
-                                    uia_lines.append(label)
-
-                                    for child in ctrl.GetChildren():
-                                        _build_uia_tree(child, depth + 1, max_depth)
-
-                                uia_lines.append(f"Active: {fg.Name}")
-                                _build_uia_tree(fg)
-                                uia_tree = "\n".join(uia_lines[:80])
+                            # Extract raw OCR text from the tool result
+                            raw_ocr = ""
+                            for item in result["content"]:
+                                if item.get("type") == "text":
+                                    raw_ocr = item.get("text", "")
+                                    break
+    
+                            # Scan for latest awareness tool results
+                            latest_windows = "(no list_windows result yet)"
+                            latest_web = "(no web_get_content result yet)"
+                            latest_tabs = "(no web_list_tabs result yet)"
+                            for m in reversed(messages):
+                                if m["role"] == "tool":
+                                    n = m.get("name", "")
+                                    if n == "list_windows" and latest_windows.startswith("(no"):
+                                        latest_windows = m.get("content", "")
+                                    elif n == "web_get_content" and latest_web.startswith("(no"):
+                                        latest_web = m.get("content", "")
+                                    elif n == "web_list_tabs" and latest_tabs.startswith("(no"):
+                                        latest_tabs = m.get("content", "")
+    
+                            # Build UIA tree with content
+                            uia_tree = "(UIA inspection not available)"
+                            try:
+                                from cua.tools.uia import _foreground_control
+                                fg = _foreground_control()
+                                if fg is not None:
+                                    uia_lines = []
+    
+                                    def _build_uia_tree(ctrl, depth=0, max_depth=3):
+                                        if depth > max_depth:
+                                            return
+                                        indent = "  " * depth
+                                        name = ctrl.Name or ""
+                                        ctype = ctrl.ControlTypeName
+                                        auto_id = ctrl.AutomationId or ""
+    
+                                        # Try to read value for editable/text controls
+                                        value = ""
+                                        if name and ctype in ("Edit", "Document", "Text", "DataItem"):
+                                            try:
+                                                vp = ctrl.GetValuePattern()
+                                                if vp.Value:
+                                                    value = f' = "{vp.Value[:60]}"'
+                                            except Exception:
+                                                pass
+    
+                                        label = f"{indent}{ctype}"
+                                        if name:
+                                            label += f" '{name}'"
+                                        if auto_id:
+                                            label += f" #{auto_id}"
+                                        if value:
+                                            label += value
+    
+                                        rect = ctrl.BoundingRectangle
+                                        if rect and rect.width() > 0:
+                                            label += f" ({rect.left}, {rect.top})"
+    
+                                        uia_lines.append(label)
+    
+                                        for child in ctrl.GetChildren():
+                                            _build_uia_tree(child, depth + 1, max_depth)
+    
+                                    uia_lines.append(f"Active: {fg.Name}")
+                                    _build_uia_tree(fg)
+                                    uia_tree = "\n".join(uia_lines[:80])
+                            except Exception as e:
+                                uia_tree = f"(UIA inspection failed: {e})"
+    
+                            print(f"  [ocr-clean] UIA tree: {len(uia_tree)} chars")
+    
+                            # Fork agent context. messages already includes the tool
+                            # and user image messages from the screenshot result.
+                            clean_messages = list(messages)
+    
+                            clean_messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": (
+                                        f"Raw OCR: {raw_ocr}\n\n"
+                                        f"list_windows: {latest_windows}\n\n"
+                                        f"web_get_content: {latest_web}\n\n"
+                                        f"web_list_tabs: {latest_tabs}\n\n"
+                                        f"UIA tree (foreground window): {uia_tree}\n\n"
+                                        f"Synthesize the above into a concise situational summary (under 400 chars). "
+                                        f"Surface: (1) which windows/apps are open, (2) where key interactive elements are "
+                                        f"(coordinates for click targets, UIA control names for uia_click/uia_set_value), "
+                                        f"(3) what input fields exist, (4) what action to take next. "
+                                        f"Be specific and actionable."
+                                    )},
+                                ],
+                            })
+                            clean_resp = client.chat.completions.create(
+                                model=model,
+                                messages=clean_messages,
+                                max_tokens=512,
+                            )
+                            cleaned_ocr = clean_resp.choices[0].message.content or ""
+                            if hasattr(clean_resp, "usage") and clean_resp.usage:
+                                token_usage["prompt"] += clean_resp.usage.prompt_tokens or 0
+                                token_usage["completion"] += clean_resp.usage.completion_tokens or 0
+                                token_usage["total"] += clean_resp.usage.total_tokens or 0
+                            print(f"  [ocr-clean] cleaned: {cleaned_ocr[:120]}")
+    
+                            # Append cleaned OCR as a user message for the agent
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": f"Cleaned OCR text: {cleaned_ocr}"},
+                                ],
+                            })
                         except Exception as e:
-                            uia_tree = f"(UIA inspection failed: {e})"
-
-                        print(f"  [ocr-clean] UIA tree: {len(uia_tree)} chars")
-
-                        # Fork agent context. messages already includes the tool
-                        # and user image messages from the screenshot result.
-                        clean_messages = list(messages)
-
-                        clean_messages.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": (
-                                    f"Raw OCR from screenshot (normalized coordinates in parentheses):\n"
-                                    f"{raw_ocr}\n\n"
-                                    f"Latest list_windows result:\n{latest_windows}\n\n"
-                                    f"Latest web_get_content result:\n{latest_web}\n\n"
-                                    f"Latest web_list_tabs result:\n{latest_tabs}\n\n"
-                                    f"UIA control tree of foreground window (with content):\n"
-                                    f"{uia_tree}\n\n"
-                                    f"Based on all the above, summarize what's useful for the next step.\n"
-                                    f"- Desktop UI: use list_windows + OCR + UIA to describe windows, "
-                                    f"their controls, and WHERE key elements are (coordinates).\n"
-                                    f"- UIA controls: note buttons, menus, input fields with their names. "
-                                    f"Suggest uia_click/uia_set_value/uia_get_text for native apps "
-                                    f"instead of coordinate-based clicking.\n"
-                                    f"- Web content: if web_get_content has data, describe page elements. "
-                                    f"Suggest web tools for precise page interaction.\n"
-                                    f"- Note any input fields. Remind that paste_text is the default for ALL text input — never use type_keys for content.\n"
-                                    f"Be concise and actionable, under 400 characters."
-                                )},
-                            ],
-                        })
-                        clean_resp = client.chat.completions.create(
-                            model=model,
-                            messages=clean_messages,
-                            max_tokens=512,
-                        )
-                        cleaned_ocr = clean_resp.choices[0].message.content or ""
-                        if hasattr(clean_resp, "usage") and clean_resp.usage:
-                            token_usage["prompt"] += clean_resp.usage.prompt_tokens or 0
-                            token_usage["completion"] += clean_resp.usage.completion_tokens or 0
-                            token_usage["total"] += clean_resp.usage.total_tokens or 0
-                        print(f"  [ocr-clean] cleaned: {cleaned_ocr[:120]}")
-
-                        # Append cleaned OCR as a user message for the agent
-                        messages.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": f"Cleaned OCR text: {cleaned_ocr}"},
-                            ],
-                        })
-                    except Exception as e:
-                        print(f"  [ocr-clean] failed: {e}")
-
-                # Verify + Think: after a state-modifying action, show before/after and reflect.
-                do_verify = args.get("verify", True) if name in VERIFY_TOOLS else True
-
-                if name in VERIFY_TOOLS and do_verify:
-                    # Start BEFORE OCR in background during the 1s wait
-                    from concurrent.futures import ThreadPoolExecutor
-                    from cua.tools.screenshot import _get_ocr_engine
-                    # Downscale for VLM, keep full-res for OCR
-                    before_scaled, _, _ = downsample_for_vlm(img_before, mouse_pos, screen_w, screen_h)
-                    before_rgb = before_scaled[..., [2, 1, 0]]
-                    before_full = img_before[..., [2, 1, 0]]
-
-                    def _ocr_before():
-                        engine = _get_ocr_engine()
-                        return engine(before_full)
-
-                    executor = ThreadPoolExecutor(max_workers=1)
-                    try:
-                        before_future = executor.submit(_ocr_before)
-
-                        print(f"  [verify] waiting 1s (OCR in background), taking after-screenshot...")
-                        time.sleep(1.0)
-                        img_after = np.array(sct.grab(monitor))
-                        img = img_after  # update current screenshot
-
-                        after_scaled, _, _ = downsample_for_vlm(img_after, mouse_pos, screen_w, screen_h)
-                        after_rgb = after_scaled[..., [2, 1, 0]]
-                        after_full = img_after[..., [2, 1, 0]]
-
-                        # Collect BEFORE OCR result + run AFTER OCR
+                            print(f"  [ocr-clean] failed: {e}")
+    
+                    # Verify + Think: after a state-modifying action, show before/after and reflect.
+                    do_verify = args.get("verify", True) if name in VERIFY_TOOLS else True
+    
+                    if name in VERIFY_TOOLS and do_verify:
+                        # Start BEFORE OCR in background during the 1s wait
+                        from concurrent.futures import ThreadPoolExecutor
+                        from cua.tools.screenshot import _get_ocr_engine
+                        # Downscale for VLM, keep full-res for OCR
+                        before_scaled, _, _ = downsample_for_vlm(img_before, mouse_pos, screen_w, screen_h)
+                        before_rgb = before_scaled[..., [2, 1, 0]]
+                        before_full = img_before[..., [2, 1, 0]]
+    
+                        def _ocr_before():
+                            engine = _get_ocr_engine()
+                            return engine(before_full)
+    
+                        executor = ThreadPoolExecutor(max_workers=1)
                         try:
-                            before_result, _ = before_future.result()
-                        except Exception:
-                            before_result = None
+                            before_future = executor.submit(_ocr_before)
+    
+                            print(f"  [verify] waiting 1s (OCR in background), taking after-screenshot...")
+                            time.sleep(1.0)
+                            img_after = np.array(sct.grab(monitor))
+                            img = img_after  # update current screenshot
+    
+                            after_scaled, _, _ = downsample_for_vlm(img_after, mouse_pos, screen_w, screen_h)
+                            after_rgb = after_scaled[..., [2, 1, 0]]
+                            after_full = img_after[..., [2, 1, 0]]
+    
+                            # Collect BEFORE OCR result + run AFTER OCR
+                            try:
+                                before_result, _ = before_future.result()
+                            except Exception:
+                                before_result = None
+                            try:
+                                ocr = _get_ocr_engine()
+                                after_result, _ = ocr(after_full)
+                            except Exception:
+                                after_result = None
+                        finally:
+                            executor.shutdown(wait=False)
+    
+                        def _format_ocr(result) -> str:
+                            if not result:
+                                return "[no text]"
+                            return " ".join(f"[{item[1]}]" for item in result)
+    
+                        before_ocr = _format_ocr(before_result)
+                        after_ocr = _format_ocr(after_result)
+                        print(f"  [verify] OCR: before={len(before_result or [])} blocks, after={len(after_result or [])} blocks")
+    
+                        # Fork agent context for the analyst — inherits all agent history,
+                        # but the analyst's response does NOT go back into agent context.
+                        delta_summary = ""
                         try:
-                            ocr = _get_ocr_engine()
-                            after_result, _ = ocr(after_full)
-                        except Exception:
-                            after_result = None
-                    finally:
-                        executor.shutdown(wait=False)
-
-                    def _format_ocr(result) -> str:
-                        if not result:
-                            return "[no text]"
-                        return " ".join(f"[{item[1]}]" for item in result)
-
-                    before_ocr = _format_ocr(before_result)
-                    after_ocr = _format_ocr(after_result)
-                    print(f"  [verify] OCR: before={len(before_result or [])} blocks, after={len(after_result or [])} blocks")
-
-                    # Fork agent context for the analyst — inherits all agent history,
-                    # but the analyst's response does NOT go back into agent context.
-                    delta_summary = ""
-                    try:
-                        analyst_messages = list(messages)  # shallow copy of agent history
-                        analyst_messages.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": (
-                                    f"Task: {task}\n"
-                                    + (f"Relevant past learnings:\n{similar_text}\n\n" if similar_text else "")
-                                    + f"Action just taken: {name}\n"
-                                    + "Analyze whether this action moved the task forward as expected."
-                                )},
-                                {"type": "text", "text": f"BEFORE {name}:"},
-                                {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
-                                {"type": "text", "text": f"BEFORE OCR: {before_ocr}"},
-                                {"type": "text", "text": f"AFTER {name}:"},
-                                {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
-                                {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
-                                {"type": "text", "text": (
-                                    "Compare BEFORE and AFTER screenshots and OCR. "
-                                    "Output a concise summary in Chinese under 200 chars: "
-                                    "what changed and whether the action had the expected effect.\n"
-                                    "Also output a short English phrase (under 80 chars) for knowledge "
-                                    "base search. Include the specific application name, UI element type, "
-                                    "and action attempted. Be specific — don't generalize.\n"
-                                    "Example: 'WeChat service account chat keyboard icon button not found'\n"
-                                    "Format as JSON: "
-                                    '{"summary": "中文总结", "en_query": "English search phrase"}'
-                                )},
-                            ],
-                        })
-                        analysis = client.chat.completions.create(
-                            model=model,
-                            messages=analyst_messages,
-                            max_tokens=256,
-                        )
-                        raw_analyst = analysis.choices[0].message.content or ""
-                        if hasattr(analysis, "usage") and analysis.usage:
-                            token_usage["prompt"] += analysis.usage.prompt_tokens or 0
-                            token_usage["completion"] += analysis.usage.completion_tokens or 0
-                            token_usage["total"] += analysis.usage.total_tokens or 0
-
-                        # Parse analyst JSON for summary + knowledge search
-                        delta_summary = raw_analyst
-                        knowledge_hits = ""
-                        try:
-                            parsed = json.loads(raw_analyst)
-                            delta_summary = parsed.get("summary", raw_analyst)
-                            en_query = parsed.get("en_query", "")
-                            if en_query:
-                                from cua.learning import search_knowledge
-                                knowledge_hits = search_knowledge(en_query)
-                                if knowledge_hits:
-                                    print(f"  [verify] knowledge: {len(knowledge_hits.splitlines())} hits")
-                        except (json.JSONDecodeError, Exception):
-                            pass  # Use raw text as summary
-
-                        print(f"  [verify] analyst: {delta_summary[:120]}")
-                    except Exception as e:
-                        print(f"  [verify] analyst failed: {e}")
-
-                    from cua.tools.think import THINK_PROMPT
-
-                    verify_content = [
-                        {"type": "text", "text": f"BEFORE {name}:"},
-                        {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
-                        {"type": "text", "text": f"AFTER {name}:"},
-                        {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
-                    ]
-                    if delta_summary:
-                        text = (
-                            f"Change analysis (from independent analyst): {delta_summary}\n\n"
-                            + (f"Related knowledge from manual KB:\n{knowledge_hits}\n\n" if knowledge_hits else "")
-                            + f"You just called {name}. Compare the BEFORE/AFTER screenshots "
-                            + f"to verify the action's effect. Then reflect on what to do next.\n\n"
-                            + f"{THINK_PROMPT}"
-                        )
-                        verify_content.append({"type": "text", "text": text})
-                    else:
-                        verify_content.append({
-                            "type": "text",
-                            "text": (
-                                f"You just called {name}. Compare the BEFORE/AFTER screenshots "
-                                f"to verify the action's effect. "
-                                f"Then reflect on what to do next.\n\n"
-                                f"{THINK_PROMPT}"
-                            ),
-                        })
-                    messages.append({"role": "user", "content": verify_content})
-
-                # Context cleanup after state-changing actions
-                if name in VERIFY_TOOLS:
-                    _total_action_count += 1
-                    _cleanup_context(messages)
-
-                    # Update the recorded step with AFTER screenshot
-                    recorder.update_last_step_screenshot(img, screen_w, screen_h, mouse_pos)
-
-                    # Every 5 actions, nudge to use memory if not used recently
-                    if _total_action_count > 0 and _total_action_count % 5 == 0:
-                        messages.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": (
-                                    f"You've taken {_total_action_count} actions. "
-                                    "Consider saving key findings to memory(action='save'). "
-                                    "If you've accumulated many notes, use rethink() to consolidate."
-                                )},
-                            ],
-                        })
-                    # Every 10 actions beyond 20, compress the oldest 10
-                    if _total_action_count >= _compressed_up_to + 20:
-                        _compress_context(messages, client, model, max_tokens, _compressed_up_to)
-                        _compressed_up_to += 10
-
-        return {
-            "success": False,
-            "summary": f"Reached maximum iterations ({max_iterations}) without calling finish.",
-            "steps": [],
-            "tokens": token_usage,
-            "_tool_calls_log": _current_tool_log,
-        }
+                            analyst_messages = list(messages)  # shallow copy of agent history
+                            analyst_messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": (
+                                        f"Task: {task}\n"
+                                        + (f"Relevant past learnings:\n{similar_text}\n\n" if similar_text else "")
+                                        + f"Action just taken: {name}\n"
+                                        + "Analyze whether this action had the expected effect."
+                                    )},
+                                    {"type": "text", "text": f"BEFORE {name}:"},
+                                    {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
+                                    {"type": "text", "text": f"BEFORE OCR: {before_ocr}"},
+                                    {"type": "text", "text": f"AFTER {name}:"},
+                                    {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
+                                    {"type": "text", "text": f"AFTER OCR: {after_ocr}"},
+                                    {"type": "text", "text": (
+                                        "Compare BEFORE and AFTER screenshots and OCR. "
+                                        "Output a concise summary in Chinese under 200 chars: "
+                                        "what changed and whether the action had the expected effect.\n"
+                                        "Also output a short English phrase (under 80 chars) for knowledge "
+                                        "base search. Include the specific application name, UI element type, "
+                                        "and action attempted. Be specific — don't generalize.\n"
+                                        "Example: 'WeChat service account chat keyboard icon button not found'\n"
+                                        "Format as JSON: "
+                                        '{"summary": "中文总结", "en_query": "English search phrase"}'
+                                    )},
+                                ],
+                            })
+                            analysis = client.chat.completions.create(
+                                model=model,
+                                messages=analyst_messages,
+                                max_tokens=256,
+                                response_format={"type": "json_object"},
+                            )
+                            raw_analyst = analysis.choices[0].message.content or ""
+                            if hasattr(analysis, "usage") and analysis.usage:
+                                token_usage["prompt"] += analysis.usage.prompt_tokens or 0
+                                token_usage["completion"] += analysis.usage.completion_tokens or 0
+                                token_usage["total"] += analysis.usage.total_tokens or 0
+    
+                            # Parse analyst JSON for summary + knowledge search
+                            delta_summary = raw_analyst
+                            knowledge_hits = ""
+                            try:
+                                parsed = json.loads(raw_analyst)
+                                delta_summary = parsed.get("summary", raw_analyst)
+                                en_query = parsed.get("en_query", "")
+                                if en_query:
+                                    from cua.learning import search_knowledge
+                                    knowledge_hits = search_knowledge(en_query)
+                                    if knowledge_hits:
+                                        print(f"  [verify] knowledge: {len(knowledge_hits.splitlines())} hits")
+                            except (json.JSONDecodeError, Exception):
+                                pass  # Use raw text as summary
+    
+                            print(f"  [verify] analyst: {delta_summary[:120]}")
+                        except Exception as e:
+                            print(f"  [verify] analyst failed: {e}")
+    
+                        from cua.tools.think import THINK_PROMPT
+    
+                        verify_content = [
+                            {"type": "text", "text": f"BEFORE {name}:"},
+                            {"type": "image_url", "image_url": {"url": _np_to_png_b64(before_rgb)}},
+                            {"type": "text", "text": f"AFTER {name}:"},
+                            {"type": "image_url", "image_url": {"url": _np_to_png_b64(after_rgb)}},
+                        ]
+                        if delta_summary:
+                            text = (
+                                f"Analyst report: {delta_summary}\n\n"
+                                + (f"Knowledge base: {knowledge_hits}\n\n" if knowledge_hits else "")
+                                + f"Verify the effect of {name} by comparing BEFORE/AFTER above. "
+                                + f"Then:\n\n{THINK_PROMPT}"
+                            )
+                            verify_content.append({"type": "text", "text": text})
+                        else:
+                            verify_content.append({
+                                "type": "text",
+                                "text": (
+                                    f"Verify the effect of {name} by comparing BEFORE/AFTER above. "
+                                    f"Then:\n\n{THINK_PROMPT}"
+                                ),
+                            })
+                        messages.append({"role": "user", "content": verify_content})
+    
+                    # Context cleanup after state-changing actions
+                    if name in VERIFY_TOOLS:
+                        _total_action_count += 1
+                        _cleanup_context(messages)
+    
+                        # Update the recorded step with AFTER screenshot
+                        recorder.update_last_step_screenshot(img, screen_w, screen_h, mouse_pos)
+    
+                        # Every 5 actions, nudge to use memory if not used recently
+                        if _total_action_count > 0 and _total_action_count % 5 == 0:
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": (
+                                        f"You've taken {_total_action_count} actions. "
+                                        "Consider saving key findings to memory(action='save'). "
+                                        "If you've accumulated many notes, use rethink() to consolidate."
+                                    )},
+                                ],
+                            })
+                        # Every 10 actions beyond 20, compress the oldest 10
+                        if _total_action_count >= _compressed_up_to + 20:
+                            _compress_context(messages, client, model, max_tokens, _compressed_up_to)
+                            _compressed_up_to += 10
+    
+            # Max iterations reached — ask user whether to continue
+            print(f"\n  ⏸  Reached {max_iterations} iterations ({len(_current_tool_log)} tool calls).")
+            try:
+                choice = input("  Continue? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                choice = "n"
+            if choice == "y":
+                extra = 50
+                print(f"  ▶  Extending by {extra} iterations (total now {max_iterations + extra})...")
+                max_iterations += extra
+                # Re-inject the near-limit reminder for the extended batch
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Granted {extra} more iterations. Continue working on the task. "
+                        "If you're stuck or the task is done, call finish()."
+                    ),
+                })
+                continue  # restart the for loop with new max_iterations
+            else:
+                return {
+                    "success": False,
+                    "interrupted": True,
+                    "summary": f"Reached {max_iterations} iterations, user chose to stop.",
+                    "steps": [],
+                    "tokens": token_usage,
+                    "_tool_calls_log": _current_tool_log,
+                }

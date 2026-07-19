@@ -9,7 +9,7 @@ base_url: "https://api.moonshot.cn/v1"
 max_completion_tokens: 131072  # Max tokens per API call (K3 default, max 1048576)
 
 # Agent loop
-max_iterations: 50            # Max tool-calling iterations per task
+max_iterations: 100           # Max tool-calling iterations per task
 
 # Screenshot
 jpeg_quality: 85              # JPEG compression quality (1-100)

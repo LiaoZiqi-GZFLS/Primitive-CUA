@@ -17,3 +17,4 @@ Applies to every task regardless of application or workflow phase.
 - **Verify every action**: Confirm outcome before next step; use verify screenshots + OCR + analyst
 - **Handle interruptions**: Notifications, update prompts, UAC dialogs should be dismissed before task
 - **Absolute paths**: Always use absolute file paths; verify file existence after file operations
+- **App launch verification**: After `launch_app()`, use `list_windows()` to confirm the target app actually opened. If the app is not installed, Windows Start menu search will silently fall back to a Bing search in Edge instead — always check.

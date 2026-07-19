@@ -270,17 +270,17 @@ def _extract_skill_from_trace(task: str, steps: list[str], tool_log: list[str], 
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You extract reusable automation skills from successful task traces. Output valid JSON only."},
+                {"role": "system", "content": "You extract reusable desktop automation skills from successful task traces. Identify the generalizable workflow — which tools to use, in what order, with what strategy. Output valid JSON only."},
                 {"role": "user", "content": (
                     f"Task: {task}\n\nSteps taken:\n" +
                     "\n".join(f"- {s}" for s in (steps or [])) +
                     f"\n\nTool trace (last 20):\n" +
                     "\n".join(tool_log[-20:]) +
-                    f"\n\nExtract a reusable skill. Return JSON:\n"
-                    f'{{"name": "kebab-case-name", "description": "one line", '
-                    f'"steps": ["step 1", "step 2"], '
+                    f"\n\nExtract the reusable workflow as JSON:\n"
+                    f'{{"name": "kebab-case-name", "description": "one-line summary of what this skill accomplishes", '
+                    f'"steps": ["actionable step 1", "actionable step 2"], '
                     f'"tools_used": ["tool1", "tool2"], '
-                    f'"prerequisites": "what must be true before using"}}'
+                    f'"prerequisites": "what must be true before using this skill"}}'
                 )},
             ],
             response_format={"type": "json_object"},
@@ -492,27 +492,41 @@ def reflect_failure(task: str, report: dict, tool_log: list[str], client, model:
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "Analyze automation failures. Output valid JSON only."},
+                {"role": "system", "content": "You analyze failed desktop automation attempts. Identify the root cause and suggest a concrete fix. Output valid JSON only."},
                 {"role": "user", "content": (
                     f"Task: {task}\nFailure summary: {summary}\n"
                     f"Tool trace (last 15):\n" + "\n".join(tool_log[-15:]) +
-                    f"\n\nAnalyze the failure. Return JSON:\n"
-                    f'{{"reason": "why it failed", "fix": "how to fix it next time"}}'
+                    f"\n\nDiagnose the failure. Return JSON:\n"
+                    f'{{"reason": "root cause of failure", "fix": "concrete fix to try next time"}}'
                 )},
             ],
             response_format={"type": "json_object"},
             max_tokens=512,
         )
         content = resp.choices[0].message.content
+        # K3 may return empty content when response_format json_object fails
         if not content:
-            raise ValueError("empty response")
-
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError as e:
-            print(f"  [reflection] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
-            print(f"  [reflection] raw preview: {content[:120]}...")
-            result = _repair_json(content)
+            # Try reasoning_content as fallback
+            reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+            if reasoning:
+                print(f"  [reflection] content empty, using reasoning_content ({len(reasoning)} chars)")
+                result = _repair_json(reasoning) if reasoning.strip().startswith("{") else {
+                    "reason": reasoning[:200],
+                    "fix": "see reasoning above",
+                }
+            else:
+                print(f"  [reflection] both content and reasoning empty, using template fallback")
+                result = {
+                    "reason": summary[:200] or "unknown failure",
+                    "fix": "review the tool trace and try a different approach",
+                }
+        else:
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as e:
+                print(f"  [reflection] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
+                print(f"  [reflection] raw preview: {content[:120]}...")
+                result = _repair_json(content)
 
         with _db() as conn:
             conn.execute(
@@ -558,7 +572,7 @@ def settle_pending(client, model: str):
                 resp = client.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "Determine if an interrupted task was completed. Output JSON: {\"completed\": true/false, \"summary\": \"...\"}"},
+                        {"role": "system", "content": "You determine whether an interrupted desktop automation task was likely completed based on its tool trace. Look for evidence that the task's goal was accomplished (e.g., files created, text entered, windows closed). Output JSON: {\"completed\": true/false, \"summary\": \"brief explanation\"}"},
                         {"role": "user", "content": f"Task: {p['task']}\nTraces:\n" + "\n".join(traces[-15:])},
                     ],
                     response_format={"type": "json_object"},
@@ -566,12 +580,19 @@ def settle_pending(client, model: str):
                         )
                 content = resp.choices[0].message.content
                 if not content:
-                    raise ValueError("empty settlement response")
-                try:
-                    verdict = json.loads(content)
-                except json.JSONDecodeError as e:
-                    print(f"  [settle] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
-                    verdict = _repair_json(content)
+                    reasoning = getattr(resp.choices[0].message, "reasoning_content", None)
+                    if reasoning:
+                        verdict = _repair_json(reasoning) if reasoning.strip().startswith("{") else {
+                            "completed": False, "summary": reasoning[:200]
+                        }
+                    else:
+                        verdict = {"completed": False, "summary": "interrupted — unable to determine outcome"}
+                else:
+                    try:
+                        verdict = json.loads(content)
+                    except json.JSONDecodeError as e:
+                        print(f"  [settle] JSON malformed at line {e.lineno} col {e.colno}: {e.msg[:80]}")
+                        verdict = _repair_json(content)
 
                 if verdict.get("completed"):
                     report = {"success": True, "summary": verdict["summary"], "steps": []}
@@ -605,10 +626,17 @@ def settle_pending(client, model: str):
 def reflect_and_learn(task: str, report: dict, tool_log: list[str], client, model: str):
     """Unified post-task learning. Best-effort, never blocks."""
     print(f"  [learn] post-task analysis: {len(tool_log)} tool calls, success={report.get('success')}")
-    # Layer 1: AutoSkill (success only)
-    autoskill_learn(task, report, tool_log, client, model)
-    # Layer 2: Reflection (failure only)
-    reflect_failure(task, report, tool_log, client, model)
+    if report.get("success"):
+        # Layer 1: AutoSkill (success only)
+        autoskill_learn(task, report, tool_log, client, model)
+    elif report.get("interrupted"):
+        # Layer 3: Pending (interrupted — save for later settlement)
+        reason = report.get("summary", "task interrupted")
+        save_pending(task, reason, tool_log)
+        print(f"  [learn] saved as pending: {reason[:80]}")
+    else:
+        # Layer 2: Reflection (genuine failure)
+        reflect_failure(task, report, tool_log, client, model)
 
 
 def get_learnings_prompt() -> str:

@@ -19,15 +19,15 @@ THINK_SCHEMA = {
     },
 }
 
-THINK_PROMPT = """Take a step back and think carefully:
+THINK_PROMPT = """Pause and reflect:
 
-1. **Current state**: What do you see on the screen right now? What is the current situation?
-2. **Progress so far**: What have you already accomplished toward the task? What sub-tasks are complete?
-3. **What's next**: What is the immediate next action you should take? Be specific.
-4. **Plan**: Outline the remaining steps needed to complete the task.
-5. **Obstacles**: Are there any challenges or things that aren't working? How can you work around them?
+1. **Screen**: What do you see right now? What's the current situation?
+2. **Progress**: What have you accomplished so far? What sub-tasks are done?
+3. **Next action**: What specific tool call should you make next?
+4. **Remaining**: What steps are left to complete the task?
+5. **Blockers**: Any obstacles? What's your workaround?
 
-After reflecting, call the appropriate tool to take your next action. Do NOT call think() again immediately — take an action based on your reflection."""
+Then take action immediately. Do NOT call think() again — act based on your reflection."""
 
 
 def execute_think() -> dict:
