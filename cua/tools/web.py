@@ -1,20 +1,201 @@
-"""Web tools using Playwright: navigate, get_content, click, type."""
+"""Web tools using Playwright: navigate, get_content, click, type.
+
+Browser backend priority:
+  1. Chrome/Edge via CDP (real browser, best anti-detection)
+  2. rebrowser-playwright (stealth-patched Chromium)
+  3. Standard Playwright Chromium (fallback)
+
+Install rebrowser (optional but recommended):
+  pip install rebrowser-playwright
+  python -m rebrowser_playwright install chromium
+"""
+import atexit
+import os
+import shutil
+import subprocess
+import tempfile
 import time
 
 # Module-level browser state — lazy init, reused across calls
 _browser = None
 _page = None
+_playwright = None
+_PW_BACKEND = "unknown"
+
+# Try rebrowser-playwright first, fall back to standard Playwright
+try:
+    from rebrowser_playwright.sync_api import sync_playwright as _sync_pw
+except ImportError:
+    from playwright.sync_api import sync_playwright as _sync_pw
+
+CDP_PORT = 9222
+
+
+def _find_browser() -> str | None:
+    """Find Chrome or Edge executable. Returns path or None."""
+    candidates = [
+        # Chrome
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        # Edge (usually always installed on Win11)
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+_cdp_process = None  # track launched browser for cleanup
+
+
+def _try_cdp() -> bool:
+    """Try connecting to a browser via CDP. Returns True on success."""
+    global _browser, _page, _playwright, _PW_BACKEND
+    # Try both IPv4 and localhost in case Chrome binds to one but not the other
+    for addr in (f"http://127.0.0.1:{CDP_PORT}", f"http://localhost:{CDP_PORT}"):
+        try:
+            _playwright = _sync_pw().start()
+            _browser = _playwright.chromium.connect_over_cdp(addr)
+            pages = _browser.contexts[0].pages if _browser.contexts else []
+            _page = pages[0] if pages else _browser.contexts[0].new_page()
+            _PW_BACKEND = "cdp"
+            return True
+        except Exception:
+            # If playwright was started but connect failed, clean up
+            if _playwright is not None:
+                try:
+                    _playwright.stop()
+                except Exception:
+                    pass
+                _playwright = None
+    return False
+
+
+def _launch_cdp() -> bool:
+    """Launch a real Chrome/Edge with CDP enabled. Returns True on success."""
+    global _cdp_process
+    browser_exe = _find_browser()
+    if not browser_exe:
+        return False
+
+    browser_name = os.path.splitext(os.path.basename(browser_exe))[0]  # chrome or msedge
+    user_data = os.path.join(tempfile.gettempdir(), "cua-browser-profile")
+
+    # Clean stale lock files from previous runs
+    for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        lock_path = os.path.join(user_data, lock_name)
+        if os.path.exists(lock_path):
+            try:
+                if os.path.isdir(lock_path):
+                    shutil.rmtree(lock_path, ignore_errors=True)
+                else:
+                    os.unlink(lock_path)
+            except OSError:
+                pass
+
+    print(f"  [web] launching {browser_name} with CDP on port {CDP_PORT}...")
+    try:
+        _cdp_process = subprocess.Popen(
+            [
+                browser_exe,
+                f"--remote-debugging-port={CDP_PORT}",
+                f"--remote-debugging-address=127.0.0.1",
+                f"--user-data-dir={user_data}",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        print(f"  [web] failed to launch {browser_name}: {e}")
+        return False
+
+    # Wait for CDP port to come alive (up to 15s)
+    for i in range(30):
+        time.sleep(0.5)
+        if _try_cdp():
+            print(f"  [web] connected to {browser_name} via CDP")
+            return True
+
+    # CDP failed — kill the launched browser to avoid leaking windows
+    print(f"  [web] CDP timeout on port {CDP_PORT}, killing {browser_name}...")
+    try:
+        _cdp_process.kill()
+    except Exception:
+        pass
+    _cdp_process = None
+    return False
+
+
+def _launch_playwright():
+    """Fall back to Playwright's built-in Chromium (with or without rebrowser)."""
+    global _browser, _page, _playwright, _PW_BACKEND
+    # Check which backend is available
+    try:
+        from rebrowser_playwright.sync_api import sync_playwright as _pw
+        _PW_BACKEND = "rebrowser"
+    except ImportError:
+        from playwright.sync_api import sync_playwright as _pw
+        _PW_BACKEND = "standard"
+
+    print(f"  [web] starting browser backend: {_PW_BACKEND}")
+    _playwright = _pw().start()
+    _browser = _playwright.chromium.launch(headless=False)
+    _page = _browser.new_page()
+
+
+def _cleanup_playwright():
+    """Shut down browser cleanly on exit to avoid EPIPE errors."""
+    global _browser, _page, _playwright, _cdp_process
+    try:
+        if _browser is not None:
+            _browser.close()
+            _browser = None
+            _page = None
+    except Exception:
+        pass
+    try:
+        if _playwright is not None:
+            _playwright.stop()
+            _playwright = None
+    except Exception:
+        pass
+    # Kill CDP-launched browser if still running
+    if _cdp_process is not None:
+        try:
+            _cdp_process.kill()
+        except Exception:
+            pass
+        _cdp_process = None
+
+
+atexit.register(_cleanup_playwright)
 
 
 def _get_page():
-    """Get or create the Playwright page (lazy init)."""
-    global _browser, _page
-    from playwright.sync_api import sync_playwright
+    """Get or create the browser page (lazy init).
 
-    if _browser is None:
-        pw = sync_playwright().start()
-        _browser = pw.chromium.launch(headless=False)
-        _page = _browser.new_page()
+    Priority: CDP (real Chrome/Edge) > rebrowser (stealth Chromium) > standard Chromium.
+    """
+    global _browser, _page
+
+    if _browser is not None:
+        return _page
+
+    # Tier 1: Try connecting to an already-running CDP browser
+    if _try_cdp():
+        return _page
+
+    # Tier 2: Launch real Chrome/Edge with CDP
+    if _launch_cdp():
+        return _page
+
+    # Tier 3: Fall back to Playwright's Chromium (rebrowser if installed)
+    _launch_playwright()
     return _page
 
 
@@ -82,23 +263,41 @@ WEB_TYPE_SCHEMA = {
 # --- Executors ---
 
 def execute_web_navigate(url: str) -> dict:
-    """Navigate to a URL."""
+    """Navigate to a URL. Resilient to execution-context-destroyed races."""
     try:
         page = _get_page()
         page.goto(url, wait_until="domcontentloaded", timeout=15000)
+    except Exception as e:
+        err_msg = str(e)
+        # "Execution context was destroyed" / "Target closed" = page navigated
+        # or refreshed before goto() finished — often means it did load.
+        if "execution context" in err_msg.lower() or "target closed" in err_msg.lower():
+            time.sleep(1.0)
+        else:
+            return {
+                "content": [{"type": "text", "text": f"Navigation failed: {e}"}],
+                "mouse_pos": None, "last_screenshot": None,
+            }
+
+    # Try to report current state regardless of goto() outcome
+    try:
+        page = _get_page()
+        current_url = page.url
         title = page.title()
         return {
             "content": [
-                {"type": "text", "text": f"Navigated to: {url}\nPage title: {title}"}
+                {"type": "text", "text": (
+                    f"Navigated to: {url}\n"
+                    f"Current URL: {current_url}\n"
+                    f"Page title: {title}"
+                )}
             ],
-            "mouse_pos": None,
-            "last_screenshot": None,
+            "mouse_pos": None, "last_screenshot": None,
         }
     except Exception as e:
         return {
-            "content": [{"type": "text", "text": f"Navigation failed: {e}"}],
-            "mouse_pos": None,
-            "last_screenshot": None,
+            "content": [{"type": "text", "text": f"Navigation error (page may have loaded): {e}"}],
+            "mouse_pos": None, "last_screenshot": None,
         }
 
 
@@ -172,14 +371,21 @@ def execute_web_get_content() -> dict:
 
         return {
             "content": [{"type": "text", "text": "\n".join(lines)}],
-            "mouse_pos": None,
-            "last_screenshot": None,
+            "mouse_pos": None, "last_screenshot": None,
         }
     except Exception as e:
+        err_msg = str(e)
+        # "Execution context destroyed" = page navigated mid-eval — retry once
+        if "execution context" in err_msg.lower() or "target closed" in err_msg.lower():
+            try:
+                time.sleep(0.8)
+                page = _get_page()  # re-fetch after context rebuild
+                return execute_web_get_content()  # tail-recursive retry
+            except RecursionError:
+                pass
         return {
             "content": [{"type": "text", "text": f"Content extraction failed: {e}"}],
-            "mouse_pos": None,
-            "last_screenshot": None,
+            "mouse_pos": None, "last_screenshot": None,
         }
 
 

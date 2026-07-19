@@ -753,28 +753,28 @@ def run_task(task: str, config: dict | None = None) -> dict:
                             # Build UIA tree with content
                             uia_tree = "(UIA inspection not available)"
                             try:
-                                from cua.tools.uia import _foreground_control
+                                from cua.tools.uia import _foreground_control, _force_read
                                 fg = _foreground_control()
                                 if fg is not None:
                                     uia_lines = []
     
-                                    def _build_uia_tree(ctrl, depth=0, max_depth=3):
+                                    def _build_uia_tree(ctrl, depth=0, max_depth=6):
                                         if depth > max_depth:
                                             return
+                                        _force_read(ctrl)  # triggers lazy UIA provider
                                         indent = "  " * depth
                                         name = ctrl.Name or ""
                                         ctype = ctrl.ControlTypeName
                                         auto_id = ctrl.AutomationId or ""
     
-                                        # Try to read value for editable/text controls
+                                        # Force-read value on all nodes
                                         value = ""
-                                        if name and ctype in ("Edit", "Document", "Text", "DataItem"):
-                                            try:
-                                                vp = ctrl.GetValuePattern()
-                                                if vp.Value:
-                                                    value = f' = "{vp.Value[:60]}"'
-                                            except Exception:
-                                                pass
+                                        try:
+                                            vp = ctrl.GetValuePattern()
+                                            if vp.Value:
+                                                value = f' = "{vp.Value[:80]}"'
+                                        except Exception:
+                                            pass
     
                                         label = f"{indent}{ctype}"
                                         if name:

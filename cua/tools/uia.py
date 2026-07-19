@@ -1,16 +1,310 @@
-"""UI Automation tools: inspect, click, set_value, get_text via Windows UIA."""
+"""UI Automation tools: inspect, click, set_value, get_text via Windows UIA.
+
+Implements a screen-reader-emulation layer to trigger full accessibility provider
+loading in apps like WeChat that hide their UIA tree from one-shot automation tools.
+
+Screen readers are detected by Windows apps through:
+  - Subscribing to global WinEvents via SetWinEventHook (the definitive signal)
+  - Long-lived UIA client instance (not per-call)
+  - Frequent GetForegroundControl / GetFocusedElement calls
+
+By emulating this pattern, we convince apps to load their full UIA provider.
+"""
+import atexit
+import ctypes
+from ctypes import wintypes
+import threading
 import time
 
 import uiautomation as uia
 
+# --- WinEvent hook (screen-reader-level event subscription) ---
+
+_user32 = ctypes.windll.user32
+_kernel32 = ctypes.windll.kernel32
+
+WINEVENT_OUTOFCONTEXT = 0x0000
+WINEVENT_SKIPOWNPROCESS = 0x0002
+
+# Events that screen readers subscribe to — triggers full UIA provider loading
+_WINEVENTS = {
+    "focus": 0x8005,       # EVENT_OBJECT_FOCUS
+    "foreground": 0x0003,  # EVENT_SYSTEM_FOREGROUND
+    "create": 0x8000,      # EVENT_OBJECT_CREATE
+    "name_change": 0x800C, # EVENT_OBJECT_NAMECHANGE
+    "state_change": 0x800A,# EVENT_OBJECT_STATECHANGE
+}
+
+_WinEventProc = ctypes.WINFUNCTYPE(
+    None,
+    wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
+    wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD,
+)
+
+# Module-level references MUST be kept alive — if GC'd, hooks stop firing
+_hooks: list[int] = []
+_callback = None
+
+
+def _win_event_callback(hook, event, hwnd, obj_id, child_id, thread_id, time_ms):
+    """Silent callback — the subscription itself is the signal to apps."""
+    pass
+
+
+def _subscribe_winevents() -> bool:
+    """Subscribe to global WinEvents like a screen reader.
+
+    This is the definitive signal that triggers apps like WeChat to load
+    their full Qt+CEF accessibility provider. Returns True on success.
+    """
+    global _callback, _hooks
+
+    if _hooks:
+        return True  # Already subscribed
+
+    _callback = _WinEventProc(_win_event_callback)
+
+    for name, evt_id in _WINEVENTS.items():
+        hook = _user32.SetWinEventHook(
+            evt_id, evt_id,
+            0,           # hmodWinEventProc — 0 for global
+            _callback,   # callback
+            0, 0,        # idProcess, idThread — 0 = all
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        )
+        if hook:
+            _hooks.append(hook)
+        else:
+            err = _kernel32.GetLastError()
+            print(f"  [uia] WinEvent hook '{name}' failed: err={err}")
+
+    print(f"  [uia] WinEvent hooks: {len(_hooks)}/{len(_WINEVENTS)} subscribed")
+    return len(_hooks) > 0
+
+
+def _unhook_winevents():
+    """Remove all WinEvent hooks (called on exit)."""
+    global _hooks, _callback
+    for hook in _hooks:
+        try:
+            _user32.UnhookWinEvent(hook)
+        except Exception:
+            pass
+    _hooks.clear()
+    _callback = None
+
+
+# --- Screen-reader emulation session ---
+
+_screen_reader = {
+    "active": False,
+    "warmed": False,
+    "thread": None,
+    "stop": False,
+}
+
+
+def _init_uia():
+    """Initialize UIA COM in this thread (required before any UIA calls)."""
+    try:
+        uia.InitializeUIAutomationInCurrentThread()
+    except Exception:
+        pass  # May already be initialized
+
+
+MAX_DEPTH = 50  # Unlimited — traverse entire subtree
+
+
+def _force_read(ctrl):
+    """Force-read all basic properties on a control.
+
+    This coerces lazy accessibility providers (e.g. Qt/CEF in WeChat) to
+    generate full accessibility nodes for every element, not just the
+    interactive ones they expose to one-shot automation tools.
+    """
+    try:
+        _ = ctrl.ControlTypeName
+        _ = (ctrl.Name or "")
+        _ = (ctrl.AutomationId or "")
+        _ = ctrl.BoundingRectangle
+        _ = ctrl.IsEnabled
+        _ = ctrl.IsOffscreen
+    except Exception:
+        pass
+
+    # Try ValuePattern — forces value to be generated
+    try:
+        vp = ctrl.GetValuePattern()
+        _ = vp.Value
+    except Exception:
+        pass
+
+
+def _force_read_deep(ctrl, depth=0):
+    """Force-read this node AND all descendants up to MAX_DEPTH.
+
+    The exhaustive traversal pattern is the screen-reader signature that
+    triggers full UIA provider loading in WeChat (Qt+CEF) and similar apps.
+    """
+    if depth > MAX_DEPTH:
+        return
+    try:
+        _force_read(ctrl)
+
+        # CEF detection: if this is a Document or Group control, try
+        # DocumentPattern to force the embedded web accessibility tree to load.
+        ct = ctrl.ControlTypeName
+        aid = (ctrl.AutomationId or "").lower()
+        name = (ctrl.Name or "").lower()
+        is_cef_host = (
+            ct in ("Document", "Group", "Pane") and
+            any(kw in aid or kw in name for kw in
+                ("chrome", "cef", "browser", "web", "render", "widget"))
+        )
+        if is_cef_host:
+            try:
+                dp = ctrl.GetDocumentPattern()
+                _ = dp  # forces provider activation
+            except Exception:
+                pass
+
+        for child in ctrl.GetChildren():
+            _force_read_deep(child, depth + 1)
+    except Exception:
+        pass
+
+
+def _warm_uia():
+    """Emulate a screen reader session to trigger full UIA provider loading.
+
+    Called once before the first UIA tool call. The behaviors below match
+    what Windows screen readers (Narrator, NVDA, JAWS) do, triggering apps
+    like WeChat to load their full Qt+CEF accessibility provider.
+    """
+    global _screen_reader
+
+    if _screen_reader["warmed"]:
+        return
+
+    _screen_reader["warmed"] = True
+    _init_uia()
+
+    print("  [uia] starting screen-reader emulation (aggressive)...")
+
+    # 1. Subscribe to global WinEvents — THE definitive screen-reader signal.
+    _subscribe_winevents()
+
+    # 2. Global search timeout — screen readers are patient
+    uia.SetGlobalSearchTimeout(10000)
+
+    # 3. Aggressive full-desktop deep scan — depth=50, force-read all nodes.
+    #    This simulates a screen reader doing its initial "scan everything".
+    #    The exhaustive pattern triggers lazy providers to fully populate.
+    print("  [uia] deep-scanning desktop tree (depth=50, force-read all)...")
+    node_count = [0]
+    try:
+        root = uia.GetRootControl()
+        for child in root.GetChildren():
+            _force_read_deep(child, depth=0)
+            node_count[0] += 1
+    except Exception as e:
+        print(f"  [uia] desktop scan interrupted: {e}")
+    print(f"  [uia] desktop scan touched {node_count[0]} top-level windows")
+
+    # 4. Get focused element explicitly — screen readers "read" the focus
+    try:
+        focused = uia.GetFocusedControl()
+        if focused is not None:
+            _force_read_deep(focused, depth=0)
+            print(f"  [uia] focused: {focused.ControlTypeName} '{focused.Name}'")
+    except Exception:
+        pass
+
+    # 5. Background focus tracker — continuous focus polling + subtree probing
+    def _focus_tracker():
+        prev_focus = None
+        while not _screen_reader["stop"]:
+            try:
+                # Get foreground AND focused — screen readers track both
+                fg = uia.GetForegroundControl()
+                focused = uia.GetFocusedControl()
+
+                if fg is not None:
+                    # Force-read foreground window properties every cycle
+                    fg_id = id(fg)
+                    if fg_id != prev_focus:
+                        prev_focus = fg_id
+                        # Deep-scan the new foreground window — screen readers
+                        # re-scan when foreground changes
+                        _force_read_deep(fg, depth=0)
+
+                if focused is not None:
+                    # Force-read focused element + its ancestors (screen reader
+                    # reads the focus chain on every change)
+                    _force_read(focused)
+                    try:
+                        for child in focused.GetChildren():
+                            _force_read(child)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.3)  # 300ms — faster polling for responsiveness
+
+    _screen_reader["stop"] = False
+    _screen_reader["thread"] = threading.Thread(
+        target=_focus_tracker, daemon=True, name="uia-focus-tracker"
+    )
+    _screen_reader["thread"].start()
+    _screen_reader["active"] = True
+
+    print("  [uia] screen-reader emulation active (WinEvents + deep scan + focus tracking)")
+
+
+def _ensure_warm():
+    """Ensure screen-reader emulation is running before any UIA call."""
+    if not _screen_reader["warmed"]:
+        _warm_uia()
+
+
+def _stop_screen_reader():
+    """Stop background thread + unhook WinEvents (called on exit)."""
+    global _screen_reader
+    _screen_reader["stop"] = True
+    _screen_reader["active"] = False
+    _unhook_winevents()
+
+
+atexit.register(_stop_screen_reader)
+
+
+# --- Control helpers ---
 
 def _foreground_control():
-    """Get the foreground window's UIA control."""
-    return uia.GetForegroundControl()
+    """Get the foreground window's UIA control.
+
+    On first call per window, triggers a deep property probe to force
+    lazy accessibility providers to fully populate.
+    """
+    _ensure_warm()
+    fg = uia.GetForegroundControl()
+    if fg is not None:
+        # Force-read top-level properties + immediate children
+        _force_read(fg)
+        try:
+            for child in fg.GetChildren():
+                _force_read(child)
+        except Exception:
+            pass
+    return fg
 
 
-def _find_control(name: str, max_depth: int = 4):
-    """Find a control by name (partial match, case-insensitive) in the foreground window."""
+def _find_control(name: str, max_depth: int = MAX_DEPTH):
+    """Find a control by name (partial match, case-insensitive) in the foreground window.
+
+    Uses exhaustive deep search (depth=50) — the aggressive traversal forces
+    lazy UIA providers to fully populate their tree.
+    """
     fg = _foreground_control()
     if fg is None:
         return None
@@ -20,13 +314,17 @@ def _find_control(name: str, max_depth: int = 4):
     def search(ctrl, depth):
         if depth > max_depth:
             return None
+        _force_read(ctrl)  # Force property generation on every node touched
         ctrl_name = (ctrl.Name or "").lower()
         if name_lower in ctrl_name:
             return ctrl
-        for child in ctrl.GetChildren():
-            result = search(child, depth + 1)
-            if result:
-                return result
+        try:
+            for child in ctrl.GetChildren():
+                result = search(child, depth + 1)
+                if result:
+                    return result
+        except Exception:
+            pass
         return None
 
     return search(fg, 0)
@@ -52,14 +350,14 @@ UIA_INSPECT_SCHEMA = {
     "type": "function",
     "function": {
         "name": "uia_inspect",
-        "description": "Inspect the UI controls of the current foreground window. Returns a tree of controls with their names, types, and positions. Use this to understand the structure of native Windows apps, Office programs, and dialogs before interacting with them. Much faster and more precise than screenshot-based coordinate clicking.",
+        "description": "Inspect the UI controls of the current foreground window. Returns a tree of controls with their names, types, positions, and values. Performs exhaustive deep traversal (up to depth 50) — the aggressive probing forces apps like WeChat to expose their full UIA tree. Use this to understand the structure of native Windows apps, Office programs, and dialogs before interacting with them.",
         "parameters": {
             "type": "object",
             "properties": {
                 "depth": {
                     "type": "integer",
-                    "description": "How deep to traverse the control tree (1-5, default 3). Higher = more detail.",
-                }
+                    "description": f"How deep to traverse (1-{MAX_DEPTH}, default 6). Higher = more detail at the cost of time.",
+                },
             },
             "required": [],
         },
@@ -118,10 +416,15 @@ UIA_GET_TEXT_SCHEMA = {
 
 # --- Executors ---
 
-def execute_uia_inspect(depth: int = 3) -> dict:
-    """Dump control tree of foreground window."""
+def execute_uia_inspect(depth: int = 6) -> dict:
+    """Dump control tree of foreground window with full property probing.
+
+    Traverses exhaustively (up to depth 50) and force-reads Name,
+    AutomationId, ValuePattern on every node. This aggressive probing
+    coerces lazy UIA providers to generate complete accessibility trees.
+    """
     try:
-        depth = max(1, min(5, depth))
+        depth = max(1, min(MAX_DEPTH, depth))
         fg = _foreground_control()
         if fg is None:
             return {
@@ -130,18 +433,34 @@ def execute_uia_inspect(depth: int = 3) -> dict:
             }
 
         lines = [f"Active window: {fg.Name}"]
+        scanned = [0]
 
         def walk(ctrl, d):
             if d > depth:
                 return
-            lines.append(_format_control(ctrl, d))
-            for child in ctrl.GetChildren():
-                walk(child, d + 1)
+            # Force-read all properties — triggers lazy provider generation
+            _force_read(ctrl)
+            scanned[0] += 1
+            # Format with value if available
+            line = _format_control(ctrl, d)
+            try:
+                vp = ctrl.GetValuePattern()
+                if vp.Value:
+                    line += f' = "{vp.Value[:60]}"'
+            except Exception:
+                pass
+            lines.append(line)
+            try:
+                for child in ctrl.GetChildren():
+                    walk(child, d + 1)
+            except Exception:
+                pass
 
         walk(fg, 0)
 
+        text = f"Scanned {scanned[0]} nodes at depth {depth}\n\n" + "\n".join(lines[:300])
         return {
-            "content": [{"type": "text", "text": "\n".join(lines[:120])}],
+            "content": [{"type": "text", "text": text}],
             "mouse_pos": None, "last_screenshot": None,
         }
     except Exception as e:
@@ -162,7 +481,6 @@ def execute_uia_click(name: str) -> dict:
             }
 
         # Click() often throws COM errors even when the click actually succeeds.
-        # Try Click() first, fall back to InvokePattern. Ignore exceptions.
         try:
             ctrl.Click()
         except Exception:

@@ -1,0 +1,68 @@
+Window: 微信 (WindowControl)
+WindowControl '微信'
+  PaneControl
+  PaneControl '微信'
+    PaneControl '微信'
+      PaneControl
+        PaneControl
+          PaneControl
+            PaneControl
+              TextControl '总结'
+              TextControl '由'
+              TextControl '元宝提供'
+            ButtonControl '恢复'
+            ButtonControl '恢复'
+            ButtonControl '下载内容'
+            ButtonControl '更多'
+          ButtonControl '最小化'
+          ButtonControl '最大化'
+          ButtonControl '恢复'
+          ButtonControl '关闭'
+        PaneControl
+          PaneControl
+            PaneControl
+            PaneControl
+          PaneControl
+            PaneControl
+              PaneControl
+                ButtonControl '点按该按钮可后退，点按上下文菜单可查看历史记录'
+                ButtonControl '点按该按钮可后退，点按上下文菜单可查看历史记录'
+                ButtonControl '点按该按钮可前进，点按上下文菜单可查看历史记录'
+                ButtonControl '重新加载' #view_1003
+              PaneControl
+              PaneControl
+                ButtonControl '收起'
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+            PaneControl
+              ButtonControl '置顶'
+              ButtonControl '最小化'
+              ButtonControl '最大化'
+              ButtonControl '恢复'
+              ButtonControl '关闭'
+            PaneControl
+            TextControl
+            PaneControl
+              ButtonControl '点按该按钮可后退，点按上下文菜单可查看历史记录'
+              ButtonControl '点按该按钮可前进，点按上下文菜单可查看历史记录'
+              TextControl '由微信提供翻译支持，结果仅供参考。'
+            PaneControl
+              PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+                PaneControl
+              PaneControl
+              PaneControl
+                PaneControl 'Chrome Legacy Window' #72998048
+              PaneControl
+              PaneControl
+                PaneControl
+                SeparatorControl
+          PaneControl
