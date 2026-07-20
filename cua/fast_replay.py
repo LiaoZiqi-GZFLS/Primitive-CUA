@@ -552,9 +552,9 @@ def _execute_steps(task: str, config: dict, steps: list[dict],
     win_rect = win32gui.GetWindowRect(window_hwnd)
     win_offset_x, win_offset_y = win_rect[0], win_rect[1]
 
-    # Select correct monitor
-    monitor = mss.mss().monitors[1]
+    # Select correct monitor and capture
     with mss.mss() as sct:
+        monitor = sct.monitors[1]
         for mon in sct.monitors[1:]:
             if (mon["left"] <= win_offset_x < mon["left"] + mon["width"] and
                 mon["top"] <= win_offset_y < mon["top"] + mon["height"]):

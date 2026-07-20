@@ -17,7 +17,9 @@ Usage:
   python cua/element_manager.py show <name>             # Show element details
   python cua/element_manager.py add <name>              # Add element (mouse position)
   python cua/element_manager.py edit <name>             # Re-capture element
+  python cua/element_manager.py rename <name>           # Rename element label
   python cua/element_manager.py delete <name>           # Delete element
+  python cua/element_manager.py preview [name]          # Open element image (name optional)
   python cua/element_manager.py test <name>             # Test match element on screen
   python cua/element_manager.py search <text>           # Search elements by OCR text
   python cua/element_manager.py export                  # Export all elements as JSON
@@ -104,6 +106,17 @@ def cmd_show(name: str):
     print(f"Image:        {img_path} {'✓' if img_path and os.path.exists(img_path) else '✗'}")
 
 
+def _unique_name(name: str) -> str:
+    """Ensure unique element name. If collision, append short dHash suffix."""
+    existing = [e.get("ocr_text", "") for e in _load_all()]
+    if name not in existing:
+        return name
+    # Append last 4 chars of a hash-based suffix
+    import hashlib
+    suffix = hashlib.md5(f"{name}{time.time()}".encode()).hexdigest()[:4]
+    return f"{name}_{suffix}"
+
+
 def cmd_add(name: str):
     """Add a new element by positioning mouse and capturing."""
     import cv2
@@ -111,6 +124,8 @@ def cmd_add(name: str):
     import pyautogui
     from cua.recorder import record_template, _get_window_info
 
+    # Deduplicate name
+    name = _unique_name(name)
     print(f"Adding element: {name}")
     print("Position your mouse on the target element...")
     input("Press Enter when ready: ")
@@ -187,6 +202,41 @@ def cmd_add(name: str):
         print(f"  ✓ Text element saved: {tid}")
 
 
+def cmd_preview(name: str = None):
+    """Open element template images for visual inspection."""
+    import os as _os
+
+    if name:
+        el = _find_by_name(name)
+        if not el:
+            print(f"Element not found: {name}")
+            return
+        img_path = el.get("image_path", "")
+        if img_path and _os.path.exists(img_path):
+            print(f"Opening: {img_path}")
+            _os.startfile(img_path)
+        else:
+            print(f"No image for: {name} (text-only element)")
+    else:
+        # Preview all elements with images
+        elements = _load_all()
+        with_img = []
+        for e in elements:
+            p = e.get("image_path", "")
+            if p and _os.path.exists(p):
+                sz = _os.path.getsize(p)
+                with_img.append((e, sz))
+        if not with_img:
+            print("No elements with images found.")
+            return
+        print(f"{'OCR Text':<45s} {'Size':>8s} {'Path'}")
+        print("-" * 100)
+        for e, sz in with_img:
+            text = e.get("ocr_text", e.get("template_id", "?"))[:43]
+            path = e.get("image_path", "")[:50]
+            print(f"{text:<45s} {sz:>7d}B {path}")
+
+
 def cmd_edit(name: str):
     """Re-capture an existing element (update its template)."""
     el = _find_by_name(name)
@@ -202,6 +252,24 @@ def cmd_edit(name: str):
             except: pass
     # Re-add
     cmd_add(name)
+
+
+def cmd_rename(name: str):
+    """Rename an element's OCR text (used as the click target)."""
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+    old_name = el.get("ocr_text", el.get("template_id", "?"))
+    new_name = input(f"New name (current: '{old_name[:50]}'): ").strip()
+    if not new_name:
+        return
+    meta_path = el.get("_file", "")
+    if meta_path and os.path.exists(meta_path):
+        el["ocr_text"] = new_name
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(el, f, ensure_ascii=False, indent=2)
+        print(f"  Renamed: '{old_name[:40]}' → '{new_name}'")
 
 
 def cmd_delete(name: str):
@@ -337,8 +405,10 @@ def main():
         "list": lambda: cmd_list(),
         "show": lambda: cmd_show(arg) if arg else print("Usage: ... show <name>"),
         "add": lambda: cmd_add(arg) if arg else print("Usage: ... add <name>"),
+        "preview": lambda: cmd_preview(arg) if arg else cmd_preview(),
         "edit": lambda: cmd_edit(arg) if arg else print("Usage: ... edit <name>"),
         "delete": lambda: cmd_delete(arg) if arg else print("Usage: ... delete <name>"),
+        "rename": lambda: cmd_rename(arg) if arg else print("Usage: ... rename <name>"),
         "test": lambda: cmd_test(arg) if arg else print("Usage: ... test <name>"),
         "search": lambda: cmd_search(arg) if arg else print("Usage: ... search <text>"),
         "export": cmd_export,

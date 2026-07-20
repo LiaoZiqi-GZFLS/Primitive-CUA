@@ -20,6 +20,31 @@ import numpy as np
 DATA_DIR = Path(__file__).parent / "data" / "templates"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# Cache of existing OCR text names — loaded once to avoid disk scan on every record
+_existing_names: set[str] | None = None
+
+
+def _refresh_name_cache():
+    """Load all existing element names into memory for fast dedup."""
+    global _existing_names
+    _existing_names = set()
+    if not DATA_DIR.exists():
+        return
+    for p in DATA_DIR.rglob("*.json"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            _existing_names.add(d.get("ocr_text", ""))
+        except Exception:
+            pass
+
+
+def _get_name_cache() -> set[str]:
+    global _existing_names
+    if _existing_names is None:
+        _refresh_name_cache()
+    return _existing_names
+
 # --- dHash (64-bit difference hash) ---
 
 
@@ -299,8 +324,92 @@ def record_template(
         except Exception:
             pass
 
-    # 5. Embedding of OCR text (proxy for visual embedding)
-    vec = _embed_text(button_text)
+    # 4b. Three-part name: {app}-{position}-{function}
+    #     "搜索" → "微信-顶栏-搜索", "OK" → "记事本-底部-确定"
+    import re
+    app_hint = ""
+    win_title = win.get("title", "")
+    if win_title:
+        zh = re.findall(r'[一-鿿㐀-䶿]{2,8}', win_title)
+        if zh:
+            app_hint = zh[0][:8]
+        else:
+            en = re.findall(r'[a-zA-Z]{2,16}', win_title)
+            if en and en[0].lower() not in ('the','and','for','not','doc','new','untitled','document'):
+                app_hint = en[0][:12]
+
+    # Component: detect sub-panel/tab from window title or UIA
+    component = ""
+    if win_title:
+        # "火眼审阅 – 微信" → component = "火眼审阅"
+        # "某文章 - Google Chrome" → component = "某文章"
+        # "无标题 - 记事本" → no component (just the app)
+        import re
+        # Split on common separators
+        parts = re.split(r'\s*[-–—|]\s*', win_title)
+        for p in parts:
+            p = p.strip()
+            # Skip if it's just the app name we already have
+            if app_hint and app_hint in p:
+                continue
+            # Skip known browser suffixes
+            if re.match(r'(Google Chrome|Microsoft Edge|Firefox)$', p):
+                continue
+            # Must have meaningful content
+            if len(p) >= 2 and p.lower() not in ('无标题','untitled','new tab','新标签页'):
+                component = p[:12]
+                break
+    # Try UIA for component detection
+    if not component:
+        try:
+            from cua.tools.uia import _foreground_control
+            fg = _foreground_control()
+            if fg:
+                # Check for TabControl or Pane with distinct names
+                for child in fg.GetChildren()[:5]:
+                    ct = child.ControlTypeName
+                    cn = (child.Name or "").strip()
+                    if ct in ("TabControl", "Tab", "TabItem") and cn and len(cn) >= 2:
+                        component = cn[:12]
+                        break
+        except Exception:
+            pass
+
+    # Position from ROI within window
+    win_h = win["rect"][3] if win["rect"][3] > 0 else 1
+    win_w = win["rect"][2] if win["rect"][2] > 0 else 1
+    rel_y = roi_y / win_h if is_visual else 0.5
+    rel_x = roi_x / win_w if is_visual else 0.5
+
+    if rel_y < 0.12:      pos = "标题栏"
+    elif rel_y < 0.22:    pos = "顶栏"
+    elif rel_y < 0.35:    pos = "上部"
+    elif rel_y < 0.65:    pos = "中部"
+    elif rel_y < 0.80:    pos = "下部"
+    elif rel_y < 0.92:    pos = "底部"
+    else:                 pos = "底栏"
+
+    if rel_x < 0.25 and rel_y < 0.22: pos = "左上"
+    elif rel_x > 0.75 and rel_y < 0.22: pos = "右上"
+
+    # Assemble: {app}-{component}-{position}-{function}
+    if app_hint and button_text and not button_text.startswith(app_hint) and is_visual:
+        parts = [app_hint]
+        if component:
+            parts.append(component)
+        parts.extend([pos, button_text])
+        button_text = "-".join(parts)[:80]
+
+    # 4c. Deduplicate — check name cache and add hash suffix if collision
+    if button_text and not is_text_action:
+        cache = _get_name_cache()
+        if button_text in cache:
+            button_text = f"{button_text}_{dh:04x}"[:80]
+        cache.add(button_text)  # update cache for future checks
+
+    # 5. Embedding from core text (without hash suffix) for better matching
+    clean_text = button_text.split("_")[0] if "_" in button_text else button_text
+    vec = _embed_text(clean_text[:60])
 
     # 6. ROI relative to top-level window
     win_left, win_top = win["rect"][0], win["rect"][1]
