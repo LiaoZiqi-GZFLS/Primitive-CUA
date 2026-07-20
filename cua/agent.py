@@ -445,37 +445,17 @@ def run_task(task: str, config: dict | None = None) -> dict:
     active_tools = ALL_TOOLS
     print(f"  Tools: {len(ALL_TOOLS)} total (K3 native selection, auto-cached)")
 
-    # Translate task to English for ChromaDB embedding (MiniLM is English-only)
-    import re
-    _has_cjk = bool(re.search(r'[一-鿿㐀-䶿]', task[:80]))
-    _query_text = task[:80]
-    if _has_cjk:
-        try:
-            _tr = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "Translate to English. Output ONLY the translation, nothing else."},
-                    {"role": "user", "content": task[:200]},
-                ],
-                max_tokens=100,
-            )
-            _en = (_tr.choices[0].message.content or "").strip()
-            if _en:
-                _query_text = _en
-                print(f"  [embed] translated: {task[:60]}... → {_en[:80]}")
-        except Exception:
-            pass  # Fall back to raw task text
-
     # Search ChromaDB for similar past learnings to inject into first think()
+    # Uses multilingual embeddings — works for both Chinese and English tasks
     from cua.tools.think import set_think_context
-    similar_text = _search_similar(_query_text)
+    similar_text = _search_similar(task[:80])
     set_think_context(similar_text)
     if similar_text:
         print(f"  [memory] similar past skills found ({len(similar_text.splitlines())} lines)")
 
     # Search knowledge base for relevant manual guidance
     from cua.learning import search_knowledge
-    knowledge_text = search_knowledge(_query_text)
+    knowledge_text = search_knowledge(task[:80])
     if knowledge_text:
         print(f"  [knowledge] task-start search: {len(knowledge_text.splitlines())} hits")
     else:

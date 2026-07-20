@@ -26,7 +26,15 @@ _settle_retries: dict[int, int] = {}
 _chroma_client = None
 _skills_collection = None
 _knowledge_collection = None
-_SIMILARITY_THRESHOLD = 0.85
+_SIMILARITY_THRESHOLD = 0.65  # multilingual model — tuned from tests
+
+
+def _get_embedding_function():
+    """Get the shared multilingual embedding function."""
+    from chromadb.utils import embedding_functions
+    return embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name="paraphrase-multilingual-MiniLM-L12-v2"
+    )
 
 
 def _get_skills_collection():
@@ -34,14 +42,11 @@ def _get_skills_collection():
     global _chroma_client, _skills_collection
     if _skills_collection is None:
         import chromadb
-        from chromadb.utils import embedding_functions
         _ensure_dirs()
         _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
-        ef = embedding_functions.ONNXMiniLM_L6_V2(
-            preferred_providers=["CPUExecutionProvider"]
-        )
+        ef = _get_embedding_function()
         _skills_collection = _chroma_client.get_or_create_collection(
-            name="cua_skills",
+            name="cua_skills_v2",
             embedding_function=ef,
             metadata={"hnsw:space": "cosine"},
         )
@@ -82,15 +87,12 @@ def _get_knowledge_collection():
     global _chroma_client, _knowledge_collection
     if _knowledge_collection is None:
         import chromadb
-        from chromadb.utils import embedding_functions
         _ensure_dirs()
         if _chroma_client is None:
             _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
-        ef = embedding_functions.ONNXMiniLM_L6_V2(
-            preferred_providers=["CPUExecutionProvider"]
-        )
+        ef = _get_embedding_function()
         _knowledge_collection = _chroma_client.get_or_create_collection(
-            name="cua_knowledge",
+            name="cua_knowledge_v2",
             embedding_function=ef,
             metadata={"hnsw:space": "cosine"},
         )
@@ -147,7 +149,7 @@ def search_knowledge(query: str, top_n: int = 3) -> str:
         lines = []
         for i, (kid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
             sim = 1.0 - dist
-            if sim < 0.3:
+            if sim < 0.20:  # tuned: good matches 0.26-0.46, noise ≤0.18
                 continue
             doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
             lines.append(f"- [{sim:.0%}] {kid}: {doc[:150]}")
