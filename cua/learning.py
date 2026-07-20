@@ -97,15 +97,19 @@ def _get_knowledge_collection():
     return _knowledge_collection
 
 
-def index_knowledge():
-    """Index all .md files in the knowledge directory. Call on startup."""
+def index_knowledge() -> int:
+    """Index all .md files in the knowledge directory. Call on startup.
+
+    Returns number of newly indexed files.
+    """
     if not KNOWLEDGE_DIR.exists():
-        return
+        return 0
 
     files = list(KNOWLEDGE_DIR.glob("*.md"))
     if not files:
-        return
+        return 0
 
+    new_count = 0
     try:
         col = _get_knowledge_collection()
         indexed = set(col.get()["ids"]) if col.count() > 0 else set()
@@ -117,14 +121,17 @@ def index_knowledge():
             try:
                 with open(f, "r", encoding="utf-8") as fh:
                     content = fh.read()
-                # Use first ~500 chars as the document for embedding
                 doc = content[:500]
                 col.add(ids=[name], documents=[doc])
                 print(f"  [knowledge] indexed: {name}")
+                new_count += 1
             except Exception:
                 pass
+        if new_count == 0:
+            print(f"  [knowledge] {len(files)} files (all previously indexed)")
     except Exception:
         pass
+    return new_count
 
 
 def search_knowledge(query: str, top_n: int = 3) -> str:
@@ -669,7 +676,19 @@ def get_learnings_prompt() -> str:
         for s in recent_skills:
             lines.append(f"- **{s['name']}**: {s['description'][:120]}")
 
-    return "\n".join(lines) if lines else ""
+    result = "\n".join(lines) if lines else ""
+    if result:
+        n_r = len(recent_reflections)
+        n_l = len(recent_learnings)
+        n_s = len(recent_skills)
+        parts = []
+        if n_r: parts.append(f"{n_r} reflections")
+        if n_l: parts.append(f"{n_l} learnings")
+        if n_s: parts.append(f"{n_s} skills")
+        print(f"  [learn] loaded: {', '.join(parts)} ({len(result)} chars)")
+    else:
+        print(f"  [learn] no past learnings/reflections/skills found")
+    return result
 
 
 # Initialize DB on import (best-effort, never crash)

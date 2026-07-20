@@ -60,7 +60,7 @@ def _search_similar(task_summary: str, top_n: int = 5) -> str:
         lines = []
         for i, (sid, dist) in enumerate(zip(results["ids"][0], results["distances"][0])):
             sim = 1.0 - dist  # cosine distance → similarity
-            if sim < 0.5:  # skip weak matches
+            if sim < 0.35:  # skip very weak matches (lowered for cross-language)
                 continue
             doc = results.get("documents", [[]])[0][i] if results.get("documents") else ""
             lines.append(f"- [{sim:.0%}] {doc[:150]}")
@@ -68,6 +68,8 @@ def _search_similar(task_summary: str, top_n: int = 5) -> str:
         if lines:
             print(f"  [memory] found {len(lines)} relevant past skill(s)")
             return "\n".join(lines)
+        else:
+            print(f"  [memory] no similar skills found (threshold < 0.35)")
     except Exception:
         pass
     return ""

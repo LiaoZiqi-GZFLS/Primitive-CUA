@@ -436,23 +436,50 @@ def run_task(task: str, config: dict | None = None) -> dict:
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     # Index knowledge base on startup
-    index_knowledge()
+    n_indexed = index_knowledge()
+    if n_indexed > 0:
+        print(f"  [knowledge] indexed {n_indexed} new file(s)")
 
     # K3: 1M context + auto-caching — always send all tools, no classification needed.
     # The model handles tool selection natively.
     active_tools = ALL_TOOLS
     print(f"  Tools: {len(ALL_TOOLS)} total (K3 native selection, auto-cached)")
 
+    # Translate task to English for ChromaDB embedding (MiniLM is English-only)
+    import re
+    _has_cjk = bool(re.search(r'[一-鿿㐀-䶿]', task[:80]))
+    _query_text = task[:80]
+    if _has_cjk:
+        try:
+            _tr = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "Translate to English. Output ONLY the translation, nothing else."},
+                    {"role": "user", "content": task[:200]},
+                ],
+                max_tokens=100,
+            )
+            _en = (_tr.choices[0].message.content or "").strip()
+            if _en:
+                _query_text = _en
+                print(f"  [embed] translated: {task[:60]}... → {_en[:80]}")
+        except Exception:
+            pass  # Fall back to raw task text
+
     # Search ChromaDB for similar past learnings to inject into first think()
     from cua.tools.think import set_think_context
-    similar_text = _search_similar(task[:80])
+    similar_text = _search_similar(_query_text)
     set_think_context(similar_text)
+    if similar_text:
+        print(f"  [memory] similar past skills found ({len(similar_text.splitlines())} lines)")
 
     # Search knowledge base for relevant manual guidance
     from cua.learning import search_knowledge
-    knowledge_text = search_knowledge(task[:80])
+    knowledge_text = search_knowledge(_query_text)
     if knowledge_text:
         print(f"  [knowledge] task-start search: {len(knowledge_text.splitlines())} hits")
+    else:
+        print(f"  [knowledge] no matching guidance for this task")
 
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0   # how many action-rounds have been compressed so far
@@ -483,41 +510,40 @@ def run_task(task: str, config: dict | None = None) -> dict:
 
         # Check for trajectory replay opportunity
         _replay_result = None
-        if similar_text:
-            from cua.replay import attempt_replay, find_trajectory
-            print(f"  [replay] checking replay viability...")
-            traj = find_trajectory(task[:80])
-            if traj:
-                print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
-                _replay_result = attempt_replay(
-                    traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
-                    client, model
-                )
-                if _replay_result.get("replayed"):
-                    return {
-                        "success": True,
-                        "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
-                        "steps": _replay_result.get("tool_log", []),
-                        "tokens": token_usage,
-                        "_tool_calls_log": _replay_result.get("tool_log", []),
-                    }
-                else:
-                    print(f"  [replay] failed: {_replay_result.get('abort_reason', '')[:80]}")
-                    if _replay_result.get("steps_done", 0) > 0:
-                        # Pre-populate recorder with successful replay steps
-                        for step in traj["steps"][:_replay_result["steps_done"]]:
-                            recorder.steps.append(step)
-                        messages.append({
-                            "role": "user",
-                            "content": [{"type": "text", "text": (
-                                f"Trajectory replay was attempted but failed at step "
-                                f"{_replay_result['steps_done']}/{_replay_result['steps_total']}.\n"
-                                f"Reason: {_replay_result.get('abort_reason', '')}\n"
-                                f"Agent taking over. Assess the current state and complete the task."
-                            )}],
-                        })
+        from cua.replay import attempt_replay, find_trajectory
+        print(f"  [replay] checking replay viability...")
+        traj = find_trajectory(task[:80])
+        if traj:
+            print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
+            _replay_result = attempt_replay(
+                traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
+                client, model
+            )
+            if _replay_result.get("replayed"):
+                return {
+                    "success": True,
+                    "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
+                    "steps": _replay_result.get("tool_log", []),
+                    "tokens": token_usage,
+                    "_tool_calls_log": _replay_result.get("tool_log", []),
+                }
             else:
-                print(f"  [replay] no matching trajectory found")
+                print(f"  [replay] failed: {_replay_result.get('abort_reason', '')[:80]}")
+                if _replay_result.get("steps_done", 0) > 0:
+                    # Pre-populate recorder with successful replay steps
+                    for step in traj["steps"][:_replay_result["steps_done"]]:
+                        recorder.steps.append(step)
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": (
+                            f"Trajectory replay was attempted but failed at step "
+                            f"{_replay_result['steps_done']}/{_replay_result['steps_total']}.\n"
+                            f"Reason: {_replay_result.get('abort_reason', '')}\n"
+                            f"Agent taking over. Assess the current state and complete the task."
+                        )}],
+                    })
+        else:
+            print(f"  [replay] no matching trajectory found")
 
         # Initial screenshot for state (not sent to model yet)
         img = np.array(sct.grab(monitor))  # BGRA, (H, W, 4)
