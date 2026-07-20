@@ -1,0 +1,730 @@
+"""Script engine for CUA automation scripts (.cua).
+
+Architecture:
+  ScriptEngine  — importable engine: load + run scripts programmatically
+  ScriptResult  — structured return: code 0/1/2 + summary + log
+  CLI           — python cua/script_runner.py <script.cua> [--step] [--debug]
+
+Return codes:
+  0 — Success: task completed as expected
+  1 — Failure: task could not be completed, do not retry
+  2 — Delegate: neither success nor failure, hand over to K3 Agent
+
+Usage:
+  from cua.script_runner import ScriptEngine, ScriptResult
+  engine = ScriptEngine(config)
+  result = engine.run("cua/data/scripts/my_task.cua", step_mode=False)
+  if result.code == 0:   print("Done")
+  elif result.code == 2: agent_result = run_task(task, config)
+
+=== Script Syntax ===
+
+  # ── Return ──
+  return 0 summary text       # Success
+  return 1 summary text       # Failure
+  return 2 summary text       # Delegate to K3 Agent
+
+  # ── Variables ──
+  set name value              # $name = value
+  print text                  # Console output ($VAR expansion ok)
+
+  # ── Actions ──
+  click target_text           # Template-match + click
+  uia_click control_name      # UIA Invoke
+  web_click element_text      # Playwright click
+  type text                   # Paste via clipboard
+  keys combo                  # Keyboard shortcut
+  launch app_name             # Start menu launch
+  wait seconds                # Sleep
+  scroll direction amount     # Scroll (dir=up/down, amount=pixels)
+  navigate url                # Web browser
+  drag fx fy tx ty            # Mouse drag (normalized 0-1)
+  screenshot [path]           # Save screenshot
+  ocr [path]                  # OCR → $ocr_result
+  move x y                    # Move mouse (normalized 0-1)
+
+  # ── Control flow ──
+  if kimi question            # K3 vision: yes/no
+  if see target               # Element visible via template match?
+  if ocr text                 # Text on screen?
+  if window title_part        # Window with title open?
+  if url url_part             # Current browser URL contains?
+    ...               (indent 4 spaces for body)
+  else
+    ...
+  endif
+
+  repeat N              (eats body lines; N iterations)
+    ...
+  endrepeat
+
+  while kimi question   (re-evaluates condition each iteration)
+    ...
+  endwhile
+
+  goto label             label name
+  wait_until see target [timeout 10]
+  fail reason
+  exec macro_name        # Run another macro inline
+
+  # ── Built-in variables ──
+  $screen_w / $screen_h   $ocr_result   $last_result   $now
+"""
+import json
+import os
+import re
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+SCRIPT_DIR = Path(__file__).parent / "data" / "scripts"
+SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+
+_VAR_RE = re.compile(r"\$([a-zA-Z_][a-zA-Z0-9_]*)")
+
+
+@dataclass
+class ScriptResult:
+    """Structured return from script execution.
+
+    code 0 = success, 1 = failure, 2 = delegate to K3 Agent.
+    """
+    code: int
+    summary: str
+    steps: list = field(default_factory=list)
+    tokens: dict = field(default_factory=dict)
+    step_count: int = 0
+    success_count: int = 0
+
+    @property
+    def success(self) -> bool:
+        return self.code == 0
+
+
+class ScriptEngine:
+    """Parse and execute .cua automation scripts.
+
+    Importable API — create once with config, call .run() for each script.
+    """
+
+    def __init__(self, config: dict = None, step_mode: bool = False,
+                 debug: bool = False):
+        self.config = config or self._load_config()
+        self.step_mode = step_mode
+        self.debug = debug
+        self.vars: dict[str, str] = {}
+        self.labels: dict[str, int] = {}
+        self._lines: list[dict] = []
+        self._step_count = 0
+        self._success_count = 0
+
+    def _load_config(self):
+        from cua.config import load_config
+        return load_config()
+
+    # ── Public API ──────────────────────────────────────────
+
+    # ── Validation ──────────────────────────────────────────
+
+    VALID_COMMANDS = {
+        "click", "uia_click", "web_click", "type", "keys",
+        "launch", "wait", "scroll", "navigate", "drag",
+        "screenshot", "ocr", "move", "set", "print", "exec",
+        "if", "else", "endif", "repeat", "endrepeat",
+        "while", "endwhile", "goto", "label",
+        "wait_until", "fail", "finish", "return",
+    }
+    BLOCK_STARTS = {"if", "repeat", "while"}
+    BLOCK_ENDS = {"endif": "if", "endrepeat": "repeat", "endwhile": "while"}
+    REQUIRES_ARG = {
+        "click", "uia_click", "web_click", "type", "keys", "launch",
+        "goto", "label", "set", "scroll", "navigate", "wait_until",
+        "if", "while", "finish", "return", "wait", "drag", "fail",
+    }
+
+    def validate(self, script_path: str) -> list[str]:
+        """Validate a script without executing it. Returns list of errors."""
+        path = Path(script_path)
+        if not path.exists():
+            return [f"Script not found: {script_path}"]
+
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+
+        # Parse without executing
+        saved_labels = {}
+        errors = []
+        raw_lines = raw.splitlines()
+        block_stack: list[tuple[str, int, str]] = []  # (block_type, lineno, cmd)
+
+        for lineno, line in enumerate(raw_lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            parts = self._tokenize(stripped)
+            if not parts:
+                continue
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            # Unknown command
+            if cmd not in self.VALID_COMMANDS:
+                errors.append(f"  L{lineno}: unknown command '{cmd}'")
+
+            # Requires argument
+            if cmd in self.REQUIRES_ARG and not args:
+                errors.append(f"  L{lineno}: '{cmd}' requires arguments")
+
+            # Block tracking
+            if cmd in self.BLOCK_STARTS:
+                block_stack.append((cmd, lineno, stripped[:60]))
+            elif cmd == "endif":
+                if not block_stack or block_stack[-1][0] != "if":
+                    errors.append(f"  L{lineno}: 'endif' without matching 'if'")
+                else:
+                    block_stack.pop()
+            elif cmd in ("endrepeat", "endwhile"):
+                expected = self.BLOCK_ENDS.get(cmd)
+                if not block_stack or block_stack[-1][0] != expected:
+                    errors.append(f"  L{lineno}: '{cmd}' without matching '{expected}'")
+                else:
+                    block_stack.pop()
+
+            # Label registration
+            if cmd == "label" and args:
+                saved_labels[args[0]] = lineno
+
+            # Return code check
+            if cmd == "return" and args:
+                try:
+                    code = int(args[0])
+                    if code not in (0, 1, 2):
+                        errors.append(f"  L{lineno}: return code must be 0/1/2, got {code}")
+                except ValueError:
+                    pass
+
+        # Unclosed blocks
+        for bt, bl_no, bl_cmd in block_stack:
+            errors.append(f"  L{bl_no}: unclosed '{bt}' block: {bl_cmd}")
+
+        # goto target check
+        for li, inst in enumerate(self._parse(raw)):
+            if inst["cmd"] == "goto" and inst["args"]:
+                target = inst["args"][0]
+                if target not in saved_labels:
+                    errors.append(f"  L{inst['lineno']}: goto target '{target}' not found")
+
+        return errors
+
+    # ── Public API ──────────────────────────────────────────
+
+    def run(self, script_path: str) -> ScriptResult:
+        """Load, validate, and execute a script file."""
+        path = Path(script_path)
+        if not path.exists():
+            return ScriptResult(1, f"Script not found: {script_path}")
+
+        # Validate first
+        errors = self.validate(script_path)
+        if errors:
+            print(f"  [script] validation failed — {len(errors)} error(s):")
+            for e in errors:
+                print(e)
+            return ScriptResult(1, f"Validation failed: {len(errors)} error(s)")
+
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+
+        self._lines = self._parse(raw)
+        self._init_vars()
+        print(f"  [script] {path.name} ({len(self._lines)} commands) ✓ valid")
+
+        return self._execute()
+
+    def run_string(self, source: str, name: str = "<inline>") -> ScriptResult:
+        """Execute a script from a string (for testing or inline use)."""
+        self._lines = self._parse(source)
+        self._init_vars()
+        print(f"  [script] {name} ({len(self._lines)} commands)")
+        return self._execute()
+
+    # ── Parser ──────────────────────────────────────────────
+
+    def _init_vars(self):
+        import pyautogui
+        self.vars = {
+            "screen_w": str(pyautogui.size()[0]),
+            "screen_h": str(pyautogui.size()[1]),
+            "now": str(int(time.time() * 1000)),
+            "ocr_result": "",
+            "last_result": "",
+        }
+        self.labels = {}
+
+    def _parse(self, raw: str) -> list[dict]:
+        raw = self._expand_repeat(raw)
+        instructions = []
+        for lineno, line in enumerate(raw.splitlines(), 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(line) - len(line.lstrip())
+            parts = self._tokenize(stripped)
+            if not parts:
+                continue
+            cmd = parts[0].lower()
+            inst = {"lineno": lineno, "cmd": cmd, "args": parts[1:],
+                    "raw": stripped, "indent": indent}
+            if cmd == "label" and len(parts) > 1:
+                self.labels[parts[1]] = len(instructions)
+            instructions.append(inst)
+        return instructions
+
+    def _expand_repeat(self, raw: str) -> str:
+        lines = raw.splitlines()
+        result, i = [], 0
+        while i < len(lines):
+            s = lines[i].strip().lower()
+            if s.startswith("repeat "):
+                try:
+                    n = int(s.split()[1])
+                except (ValueError, IndexError):
+                    n = 1
+                indent = len(lines[i]) - len(lines[i].lstrip())
+                j, depth = i + 1, 1
+                while j < len(lines) and depth > 0:
+                    js = lines[j].strip().lower()
+                    ji = len(lines[j]) - len(lines[j].lstrip())
+                    if ji == indent:
+                        if js.startswith("endrepeat"): depth -= 1
+                        elif js.startswith("repeat "): depth += 1
+                    j += 1
+                body = lines[i + 1:j - 1]
+                for _ in range(n):
+                    result.extend(body)
+                i = j
+            else:
+                result.append(lines[i])
+                i += 1
+        return "\n".join(result)
+
+    def _tokenize(self, line: str) -> list[str]:
+        tokens, i = [], 0
+        while i < len(line):
+            if line[i].isspace():
+                i += 1; continue
+            if line[i] in ('"', "'"):
+                end = line.find(line[i], i + 1)
+                tokens.append(line[i + 1:end] if end >= 0 else line[i + 1:])
+                i = (end + 1) if end >= 0 else len(line)
+            else:
+                j = i
+                while j < len(line) and not line[j].isspace():
+                    j += 1
+                tokens.append(line[i:j])
+                i = j
+        return tokens
+
+    def _expand(self, text: str) -> str:
+        return _VAR_RE.sub(lambda m: self.vars.get(m.group(1), m.group(0)), text)
+
+    def _xa(self, args: list[str]) -> list[str]:
+        return [self._expand(a) for a in args]
+
+    # ── Executor ────────────────────────────────────────────
+
+    def _execute(self) -> ScriptResult:
+        ip = 0
+        if_stack: list[tuple[int, int, bool]] = []
+        while_stack: list[tuple[int, int, int]] = []
+
+        while ip < len(self._lines):
+            inst = self._lines[ip]
+            cmd = inst["cmd"]
+
+            # Block control
+            if if_stack:
+                skip = any(inst["indent"] > iid and not cond
+                           for iid, _, cond in if_stack for iid in [iid])
+                if cmd == "else":
+                    _, ei, pc = if_stack[-1]
+                    if inst["indent"] == ei:
+                        if_stack[-1] = (ei, ei, not pc)
+                        ip += 1; continue
+                if skip:
+                    ip += 1; continue
+                if cmd == "endif":
+                    if inst["indent"] == if_stack[-1][1]:
+                        if_stack.pop()
+                    ip += 1; continue
+
+            if cmd == "endwhile":
+                if while_stack:
+                    si, wi, _ = while_stack[-1]
+                    while_stack.pop()
+                    if self._while_cond(self._lines[si]):
+                        ip = si + 1; continue
+                ip += 1; continue
+            if cmd == "endrepeat":
+                ip += 1; continue
+
+            # Commands
+            if cmd == "if":
+                ip = self._do_if(inst, ip, if_stack)
+            elif cmd == "while":
+                while_stack.append((ip, inst["indent"], 0))
+                ip = ip + 1 if self._while_cond(inst) else self._skip_to(ip, "endwhile") + 1
+            elif cmd == "goto":
+                ip = self._do_goto(inst)
+            elif cmd == "label":
+                ip += 1
+            elif cmd == "return":
+                return self._do_return(inst)
+            elif cmd == "finish":
+                return self._do_return(inst)
+            elif cmd == "set":
+                self._do_set(inst); ip += 1
+            elif cmd == "print":
+                self._do_print(inst); ip += 1
+            elif cmd == "exec":
+                self._do_exec(inst); ip += 1
+            elif cmd == "wait_until":
+                self._do_wait_until(inst); ip += 1
+            elif cmd == "fail":
+                return self._do_fail(inst)
+            else:
+                self._do_action(inst); ip += 1
+
+        return ScriptResult(0, f"Script: {self._success_count}/{self._step_count} steps",
+                            step_count=self._step_count,
+                            success_count=self._success_count)
+
+    def _skip_to(self, ip: int, target: str) -> int:
+        indent = self._lines[ip]["indent"]
+        depth = 1; i = ip + 1
+        while i < len(self._lines) and depth > 0:
+            li = self._lines[i]
+            if li["cmd"] == target and li["indent"] == indent:
+                depth -= 1
+                if depth == 0: return i
+            elif li["cmd"] in ("while", "repeat") and li["indent"] == indent:
+                depth += 1
+            i += 1
+        return len(self._lines) - 1
+
+    def _while_cond(self, inst: dict) -> bool:
+        cond = inst["args"][0] if inst["args"] else ""
+        return self._ask_kimi(" ".join(inst["args"][1:])) if cond == "kimi" else False
+
+    # ── Control flow handlers ──
+
+    def _do_if(self, inst, ip, if_stack) -> int:
+        cond = inst["args"][0] if inst["args"] else ""
+        args = inst["args"][1:]
+        prompt = " ".join(args)
+        checks = {"kimi": self._ask_kimi, "see": self._check_template,
+                  "ocr": self._check_ocr, "window": self._check_window,
+                  "url": self._check_url}
+        result = checks.get(cond, lambda _: False)(prompt)
+        if_stack.append((ip, inst["indent"], result))
+        if self.debug:
+            print(f"  [if] {cond}('{prompt[:50]}') → {result}")
+        return ip + 1
+
+    def _do_goto(self, inst) -> int:
+        label = inst["args"][0] if inst["args"] else ""
+        return self.labels.get(label, self._lines.index(inst) + 1)
+
+    def _do_return(self, inst) -> ScriptResult:
+        args = self._xa(inst["args"])
+        try:
+            code = int(args[0]) if args else 0
+        except ValueError:
+            code = 0
+        summary = " ".join(args[1:]) if len(args) > 1 else (
+            "success" if code == 0 else ("failure" if code == 1 else "delegate"))
+        return ScriptResult(code, summary,
+                            step_count=self._step_count,
+                            success_count=self._success_count)
+
+    def _do_fail(self, inst) -> ScriptResult:
+        reason = " ".join(self._xa(inst["args"])) if inst["args"] else "script failed"
+        print(f"  ✗ FAIL: {reason}")
+        return ScriptResult(1, reason,
+                            step_count=self._step_count,
+                            success_count=self._success_count)
+
+    def _do_set(self, inst):
+        if len(inst["args"]) >= 2:
+            n, v = inst["args"][0], " ".join(inst["args"][1:])
+            self.vars[n] = self._expand(v)
+
+    def _do_print(self, inst):
+        print(f"  [print] {' '.join(self._xa(inst['args']))}")
+
+    def _do_exec(self, inst):
+        name = " ".join(inst["args"])
+        print(f"  [exec] → {name}")
+        from cua.recorder import load_macro
+        macro = load_macro(name)
+        if macro:
+            import win32gui
+            hwnd = [None]
+            def _enum(h, _):
+                try:
+                    if macro.get("window_class","").lower() in win32gui.GetClassName(h).lower():
+                        hwnd[0] = h
+                except: pass
+            win32gui.EnumWindows(_enum, None)
+            if hwnd[0]:
+                from cua.fast_replay import _execute_steps
+                r = _execute_steps(macro["task"], self.config, macro["steps"], hwnd[0])
+                self._step_count += len(macro["steps"])
+                if r["success"]:
+                    self._success_count += len(macro["steps"])
+
+    def _do_wait_until(self, inst):
+        args = inst["args"]
+        if len(args) < 2: return
+        kind, rest = args[0], args[1:]
+        timeout = 10
+        for a in rest:
+            if "=" in a:
+                try: k, v = a.split("="); timeout = float(v) if k == "timeout" else timeout
+                except: pass
+        target = " ".join(a for a in rest if "=" not in a)
+        deadline = time.time() + timeout
+        check_fn = {"see": self._check_template, "ocr": self._check_ocr,
+                    "window": self._check_window}.get(kind)
+        if not check_fn: return
+        while time.time() < deadline:
+            if check_fn(target): return
+            time.sleep(0.5)
+
+    # ── Action dispatch ──
+
+    def _do_action(self, inst: dict):
+        cmd, args = inst["cmd"], self._xa(inst["args"])
+        if self.step_mode:
+            if input(f"\n  [{cmd}] {' '.join(args)[:70]} → Enter/s=skip: ").strip() == "s":
+                return
+        self._step_count += 1
+        handlers = {
+            "click": self._act_click, "uia_click": self._act_uia_click,
+            "web_click": self._act_web_click, "type": self._act_type,
+            "keys": self._act_keys, "launch": self._act_launch,
+            "wait": self._act_wait, "scroll": self._act_scroll,
+            "navigate": self._act_navigate, "drag": self._act_drag,
+            "screenshot": self._act_screenshot, "ocr": self._act_ocr,
+            "move": self._act_move,
+        }
+        h = handlers.get(cmd)
+        if h:
+            try:
+                h(args)
+                self._success_count += 1
+                print(f"  ✓ {cmd} {' '.join(args)[:60]}")
+            except Exception as e:
+                print(f"  ✗ {cmd} failed: {e}")
+
+    # ── Actions ──
+
+    def _act_click(self, args):
+        t = " ".join(args)
+        pt = self._find_template(t)
+        if pt:
+            import pyautogui; pyautogui.click(pt[0], pt[1]); time.sleep(0.3)
+        else:
+            self._click_embedding(t)
+
+    def _act_uia_click(self, args):
+        from cua.tools.uia import execute_uia_click
+        execute_uia_click(" ".join(args))
+
+    def _act_web_click(self, args):
+        from cua.tools.web import execute_web_click
+        execute_web_click(" ".join(args))
+
+    def _act_type(self, args):
+        import pyperclip, pyautogui
+        pyperclip.copy(" ".join(args)); pyautogui.hotkey("ctrl", "v"); time.sleep(0.3)
+
+    def _act_keys(self, args):
+        import pyautogui
+        combo = "".join(args).replace(" ","").split("+")
+        pyautogui.hotkey(*combo); time.sleep(0.2)
+
+    def _act_launch(self, args):
+        import pyperclip, pyautogui
+        pyautogui.hotkey("win"); time.sleep(0.15)
+        pyperclip.copy(" ".join(args)); pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.15); pyautogui.press("enter"); time.sleep(1.5)
+
+    def _act_wait(self, args):
+        time.sleep(max(0.1, min(120, float(args[0] if args else 1))))
+
+    def _act_scroll(self, args):
+        import pyautogui
+        d, a = (args[0] if args else "down"), (int(args[1]) if len(args) > 1 else 3)
+        pyautogui.scroll(a if d == "up" else -a); time.sleep(0.2)
+
+    def _act_navigate(self, args):
+        from cua.tools.web import execute_web_navigate
+        execute_web_navigate(" ".join(args)); time.sleep(0.5)
+
+    def _act_drag(self, args):
+        import pyautogui
+        fx, fy, tx, ty = map(float, args[:4])
+        sw, sh = pyautogui.size()
+        pyautogui.moveTo(int(fx * sw), int(fy * sh))
+        pyautogui.drag(int((tx - fx) * sw), int((ty - fy) * sh), duration=0.3)
+        time.sleep(0.3)
+
+    def _act_screenshot(self, args):
+        import cv2, mss
+        path = args[0] if args else f"screenshot_{int(time.time())}.png"
+        img = np.array(mss.mss().grab(mss.mss().monitors[1])); cv2.imwrite(path, img[..., :3])
+
+    def _act_ocr(self, args):
+        import mss
+        from cua.tools.screenshot import _get_ocr_engine
+        img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+        engine = _get_ocr_engine(); results, _ = engine(img[..., [2, 1, 0]])
+        self.vars["ocr_result"] = " ".join(r[1] for r in (results or [])
+                                           if r[2] and float(r[2]) > 0.5)[:200]
+
+    def _act_move(self, args):
+        import pyautogui
+        pyautogui.moveTo(int(float(args[0]) * pyautogui.size()[0]),
+                         int(float(args[1]) * pyautogui.size()[1])); time.sleep(0.1)
+
+    # ── Perception ──
+
+    def _find_template(self, target_text: str) -> tuple | None:
+        from cua.recorder import list_templates, _embed_text
+        tmpls = list_templates()
+        if not tmpls: return None
+        tv = _embed_text(target_text)
+        best_s, best_t = 0, None
+        for tm in tmpls:
+            eh = tm.get("embedding_384","")
+            if eh and len(eh) >= 32:
+                try:
+                    b = bytes.fromhex(eh.ljust(768,"0")[:768])
+                    v = np.frombuffer(b, dtype=np.float16)
+                    s = float(np.dot(tv,v) / (np.linalg.norm(tv) * np.linalg.norm(v) + 1e-8))
+                    if s > best_s: best_s, best_t = s, tm
+                except: pass
+        if best_t and best_s > 0.20:
+            roi, path = best_t.get("roi",{}), best_t.get("image_path","")
+            if path and os.path.exists(path):
+                import cv2, mss
+                tm_bgr = cv2.imread(path)
+                if tm_bgr is not None:
+                    with mss.mss() as sct:
+                        img = np.array(sct.grab(sct.monitors[1]))[...,:3]
+                    from cua.fast_replay import _template_match
+                    pt, sc = _template_match(img, tm_bgr,
+                        (roi.get("x",0), roi.get("y",0), roi.get("w",40), roi.get("h",40)))
+                    if pt and sc > 0.65: return pt
+            return (roi.get("x",400), roi.get("y",300))
+        return None
+
+    def _click_embedding(self, t):
+        pt = self._find_template(t)
+        if pt:
+            import pyautogui; pyautogui.click(pt[0], pt[1]); time.sleep(0.3)
+
+    def _check_template(self, t): return self._find_template(t) is not None
+    def _check_ocr(self, t):
+        import mss; from cua.tools.screenshot import _get_ocr_engine
+        try:
+            img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+            e = _get_ocr_engine(); r, _ = e(img[...,[2,1,0]])
+            return t.lower() in " ".join(x[1].lower() for x in (r or [])
+                                         if x[2] and float(x[2]) > 0.5)
+        except: return False
+    def _check_window(self, t):
+        import win32gui; r = [False]
+        def _e(h,_):
+            if win32gui.IsWindowVisible(h):
+                try:
+                    if t.lower() in win32gui.GetWindowText(h).lower(): r[0]=True
+                except: pass
+        win32gui.EnumWindows(_e,None); return r[0]
+    def _check_url(self, t):
+        try:
+            from cua.tools.web import _get_page
+            return t.lower() in _get_page().url.lower()
+        except: return False
+
+    def _ask_kimi(self, question: str) -> bool:
+        from openai import OpenAI
+        ak = self.config.get("moonshot_api_key","") or os.environ.get("MOONSHOT_API_KEY","")
+        if not ak: return True
+        model = self.config.get("model","kimi-k3")
+        base_url = self.config.get("base_url","https://api.moonshot.cn/v1")
+        client = OpenAI(api_key=ak, base_url=base_url)
+        import mss
+        from cua.tools.screenshot import downsample_for_vlm, _np_to_png_b64
+        img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+        sc,_,_ = downsample_for_vlm(img,(0.5,0.5),img.shape[1],img.shape[0])
+        try:
+            r=client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role":"system","content":"You are a vision validator. Look at the screenshot. Output JSON: {\"answer\": true/false, \"brief\": \"why\"}"},
+                    {"role":"user","content":[
+                        {"type":"image_url","image_url":{"url":_np_to_png_b64(sc)}},
+                        {"type":"text","text":question},
+                    ]},
+                ],
+                response_format={"type":"json_object"}, max_tokens=100,
+            )
+            return json.loads(r.choices[0].message.content or "{}").get("answer",True)
+        except: return True
+
+
+# ── CLI ────────────────────────────────────────────────────
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__); return
+    path = sys.argv[1]
+    step_mode = "--step" in sys.argv
+    debug = "--debug" in sys.argv
+    check_only = "--check" in sys.argv
+
+    if not os.path.exists(path):
+        print(f"Script not found: {path}"); return
+
+    engine = ScriptEngine(step_mode=step_mode, debug=debug)
+
+    if check_only:
+        print(f"Checking: {path}")
+        errors = engine.validate(path)
+        if errors:
+            print(f"\n{len(errors)} error(s) found:")
+            for e in errors:
+                print(e)
+            sys.exit(1)
+        else:
+            print("OK - No errors found.")
+            sys.exit(0)
+
+    result = engine.run(path)
+    print(f"\n  Return code: {result.code}")
+    if result.code == 0:
+        print(f"  ✓ {result.summary}")
+    elif result.code == 1:
+        print(f"  ✗ {result.summary}")
+    else:
+        print(f"  ↪ Delegate to K3: {result.summary}")
+
+
+if __name__ == "__main__":
+    main()

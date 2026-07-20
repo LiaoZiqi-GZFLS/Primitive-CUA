@@ -1,0 +1,357 @@
+"""UI Element Manager — manage buttons, inputs, and other UI elements.
+
+Each element is a re-usable, named UI widget with:
+  name        — human-readable name (e.g. "wechat_search_button")
+  image       — cropped PNG template
+  dHash       — 64-bit perceptual hash
+  ocr_text    — OCR-extracted label text
+  embedding   — MiniLM-384 text embedding of the label
+  roi         — (x, y, w, h) relative to window
+  window      — window class, title, PID
+
+Elements are stored alongside auto-recorded templates in:
+  cua/data/templates/
+
+Usage:
+  python cua/element_manager.py list                    # List all elements
+  python cua/element_manager.py show <name>             # Show element details
+  python cua/element_manager.py add <name>              # Add element (mouse position)
+  python cua/element_manager.py edit <name>             # Re-capture element
+  python cua/element_manager.py delete <name>           # Delete element
+  python cua/element_manager.py test <name>             # Test match element on screen
+  python cua/element_manager.py search <text>           # Search elements by OCR text
+  python cua/element_manager.py export                  # Export all elements as JSON
+  python cua/element_manager.py import <file>           # Import elements from JSON
+"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+DATA_DIR = Path(__file__).parent / "data" / "templates"
+
+
+def _load_all() -> list[dict]:
+    """Load all element metadata from templates directory."""
+    results = []
+    if not DATA_DIR.exists():
+        return results
+    for p in sorted(DATA_DIR.rglob("*.json")):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            d["_file"] = str(p)
+            results.append(d)
+        except Exception:
+            pass
+    return results
+
+
+def _find_by_name(name: str) -> dict | None:
+    """Find an element by name (fuzzy match)."""
+    all_el = _load_all()
+    # Exact match first
+    for el in all_el:
+        if el.get("ocr_text", "") == name or el.get("template_id", "") == name:
+            return el
+    # OCR text contains name
+    for el in all_el:
+        if name.lower() in el.get("ocr_text", "").lower():
+            return el
+    # Template ID contains name
+    for el in all_el:
+        if name.lower() in el.get("template_id", "").lower():
+            return el
+    return None
+
+
+def cmd_list():
+    elements = _load_all()
+    if not elements:
+        print("No elements found.")
+        return
+    print(f"{'OCR Text / ID':<45s} {'Class':<25s} {'ROI':<20s} Img")
+    print("-" * 100)
+    for e in elements[-30:]:  # Show last 30
+        text = e.get("ocr_text", e.get("template_id", "?"))[:43]
+        cls = e.get("window", {}).get("class", "?")[:23]
+        roi = e.get("roi", {})
+        r = f"({roi.get('x',0)},{roi.get('y',0)} {roi.get('w',0)}x{roi.get('h',0)})"
+        img = "✓" if e.get("image_path") and os.path.exists(e["image_path"]) else "✗"
+        print(f"{text:<45s} {cls:<25s} {r:<20s} {img}")
+
+
+def cmd_show(name: str):
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+    print(f"Template ID:  {el.get('template_id', '?')}")
+    print(f"OCR Text:     {el.get('ocr_text', '(none)')}")
+    print(f"Tool:         {el.get('tool', '?')}")
+    print(f"Args:         {json.dumps(el.get('args', {}), ensure_ascii=False)}")
+    print(f"dHash:        {el.get('dhash', '?')}")
+    roi = el.get("roi", {})
+    print(f"ROI:          ({roi.get('x',0)}, {roi.get('y',0)} "
+          f"{roi.get('w',0)}x{roi.get('h',0)})")
+    win = el.get("window", {})
+    print(f"Window Class: {win.get('class', '?')}")
+    print(f"Window Title: {win.get('title', '?')[:60]}")
+    img_path = el.get("image_path", "")
+    print(f"Image:        {img_path} {'✓' if img_path and os.path.exists(img_path) else '✗'}")
+
+
+def cmd_add(name: str):
+    """Add a new element by positioning mouse and capturing."""
+    import cv2
+    import mss
+    import pyautogui
+    from cua.recorder import record_template, _get_window_info
+
+    print(f"Adding element: {name}")
+    print("Position your mouse on the target element...")
+    input("Press Enter when ready: ")
+
+    mx, my = pyautogui.position()
+    sw, sh = pyautogui.size()
+    nx, ny = mx / sw, my / sh
+
+    tool = input("Tool type [click/paste_text/type_keys/launch_app/wait/"
+                 "scroll/web_navigate/drag/uia_click/web_click] (default=click): ").strip()
+    if not tool: tool = "click"
+
+    args = {}
+    if tool == "paste_text":
+        args["text"] = input("  Text: ").strip()
+    elif tool == "type_keys":
+        args["keys"] = input("  Keys: ").strip()
+    elif tool == "launch_app":
+        args["name"] = input("  App name: ").strip()
+    elif tool == "wait":
+        try: args["seconds"] = float(input("  Seconds: ").strip())
+        except: args["seconds"] = 1.0
+    elif tool == "scroll":
+        args["direction"] = input("  Direction [down/up]: ").strip() or "down"
+        try: args["amount"] = int(input("  Amount: ").strip() or "3")
+        except: args["amount"] = 3
+    elif tool == "web_navigate":
+        args["url"] = input("  URL: ").strip()
+    elif tool == "drag":
+        try:
+            args["from_x"] = float(input("  From X (0-1): ").strip())
+            args["from_y"] = float(input("  From Y (0-1): ").strip())
+            args["to_x"] = float(input("  To X (0-1): ").strip())
+            args["to_y"] = float(input("  To Y (0-1): ").strip())
+        except: print("Invalid coords"); return
+
+    with mss.mss() as sct:
+        img = np.array(sct.grab(sct.monitors[1]))[..., :3]
+
+    meta = record_template(
+        screenshot_bgr=img, click_px=(mx, my),
+        mouse_normalized=(nx, ny), tool_name=tool, tool_args=args,
+    )
+    if meta:
+        print(f"  ✓ Element saved: {meta['template_id']}")
+        print(f"    OCR: '{meta['ocr_text'][:40]}'")
+        print(f"    dHash: {meta['dhash']}")
+    else:
+        print(f"  ⚠ Could not extract visual button — text-only element")
+        # Save manually
+        import cv2
+        from cua.recorder import _get_window_info, _embed_text, _dhash, DATA_DIR
+        win = _get_window_info()
+        safe_class = "".join(c if c.isalnum() or c in "-_" else "_" for c in win["class"])[:40]
+        ts = int(time.time() * 1000)
+        tid = f"manual_{tool}_{ts}"
+        img_dir = DATA_DIR / safe_class
+        img_dir.mkdir(parents=True, exist_ok=True)
+        img_path = img_dir / f"{tid}.png"
+        cv2.imwrite(str(img_path), np.zeros((30, 100, 3), dtype=np.uint8))
+        meta = {
+            "template_id": tid, "timestamp": ts, "tool": tool, "args": args,
+            "ocr_text": args.get("text", args.get("name", args.get("keys", ""))),
+            "roi": {"x": mx - win["rect"][0], "y": my - win["rect"][1],
+                    "w": 100, "h": 30},
+            "dhash": "0", "embedding_384": _embed_text(name).tobytes().hex(),
+            "image_path": str(img_path),
+            "click": {"px": [mx, my], "normalized": [nx, ny]},
+            "window": win,
+        }
+        meta_path = img_dir / f"{tid}.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"  ✓ Text element saved: {tid}")
+
+
+def cmd_edit(name: str):
+    """Re-capture an existing element (update its template)."""
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+    # Delete old files
+    old_img = el.get("image_path", "")
+    old_json = el.get("_file", "")
+    for p in [old_img, old_json]:
+        if p and os.path.exists(p):
+            try: os.remove(p)
+            except: pass
+    # Re-add
+    cmd_add(name)
+
+
+def cmd_delete(name: str):
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+    for p in [el.get("image_path", ""), el.get("_file", "")]:
+        if p and os.path.exists(p):
+            os.remove(p)
+            print(f"  Deleted: {p}")
+
+
+def cmd_test(name: str):
+    """Test whether an element can be matched on the current screen."""
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+
+    import cv2, mss
+    from cua.fast_replay import _template_match, _verify_ocr_text
+
+    img_path = el.get("image_path", "")
+    if not img_path or not os.path.exists(img_path):
+        print("No template image available — cannot test.")
+        return
+
+    tmpl_bgr = cv2.imread(img_path)
+    if tmpl_bgr is None:
+        print("Corrupt template image.")
+        return
+
+    with mss.mss() as sct:
+        img = np.array(sct.grab(sct.monitors[1]))[..., :3]
+
+    roi = el.get("roi", {})
+    roi_rect = (roi.get("x", 0), roi.get("y", 0),
+                max(roi.get("w", 20), 20), max(roi.get("h", 10), 10))
+    pt, score = _template_match(img, tmpl_bgr, roi_rect)
+
+    print(f"Element: {el.get('ocr_text', name)}")
+    print(f"ROI:     ({roi_rect[0]}, {roi_rect[1]} {roi_rect[2]}x{roi_rect[3]})")
+    if pt is not None:
+        print(f"Match:   ✓ score={score:.3f} position=({pt[0]},{pt[1]})")
+        expected = el.get("ocr_text", "")
+        if expected:
+            ok = _verify_ocr_text(img, pt, expected)
+            print(f"OCR:     {'✓ matches' if ok else '✗ mismatch'} '{expected[:40]}'")
+    else:
+        print(f"Match:   ✗ best_score={score:.3f} (threshold=0.70)")
+
+
+def cmd_search(text: str):
+    elements = _load_all()
+    found = [e for e in elements
+             if text.lower() in e.get("ocr_text", "").lower()
+             or text.lower() in e.get("template_id", "").lower()]
+    if not found:
+        print(f"No elements matching: {text}")
+        return
+    for e in found:
+        print(f"  {e.get('ocr_text', e.get('template_id','?'))[:50]}")
+
+
+def cmd_export():
+    elements = _load_all()
+    out_path = DATA_DIR.parent / "elements_export.json"
+    export = []
+    for e in elements:
+        export.append({
+            "name": e.get("ocr_text", e.get("template_id", "")),
+            "tool": e.get("tool", "click"),
+            "args": e.get("args", {}),
+            "roi": e.get("roi", {}),
+            "dhash": e.get("dhash", ""),
+            "window_class": e.get("window", {}).get("class", ""),
+        })
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(export, f, ensure_ascii=False, indent=2)
+    print(f"Exported {len(export)} elements → {out_path}")
+
+
+def cmd_import(path: str):
+    import shutil
+    import cv2
+    from cua.recorder import _embed_text, _dhash, _get_window_info, DATA_DIR
+
+    with open(path, "r", encoding="utf-8") as f:
+        items = json.load(f)
+    if not isinstance(items, list):
+        items = [items]
+
+    win = _get_window_info()
+    safe_class = "".join(c if c.isalnum() or c in "-_" else "_" for c in win["class"])[:40]
+    img_dir = DATA_DIR / safe_class
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for item in items:
+        ts = int(time.time() * 1000) + count
+        tid = f"import_{item.get('name','unknown')}_{ts}"[:80]
+        img_path = img_dir / f"{tid}.png"
+        cv2.imwrite(str(img_path), np.zeros((30, 100, 3), dtype=np.uint8))
+
+        meta = {
+            "template_id": tid, "timestamp": ts,
+            "tool": item.get("tool", "click"),
+            "args": item.get("args", {}),
+            "ocr_text": item.get("name", ""),
+            "roi": item.get("roi", {"x": 0, "y": 0, "w": 100, "h": 30}),
+            "dhash": item.get("dhash", "0"),
+            "embedding_384": _embed_text(item.get("name", "")).tobytes().hex(),
+            "image_path": str(img_path),
+            "click": {"px": [0, 0], "normalized": [0.5, 0.5]},
+            "window": win,
+        }
+        meta_path = img_dir / f"{tid}.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        count += 1
+    print(f"Imported {count} elements.")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__); return
+
+    cmd = sys.argv[1].lower()
+    arg = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else ""
+
+    commands = {
+        "list": lambda: cmd_list(),
+        "show": lambda: cmd_show(arg) if arg else print("Usage: ... show <name>"),
+        "add": lambda: cmd_add(arg) if arg else print("Usage: ... add <name>"),
+        "edit": lambda: cmd_edit(arg) if arg else print("Usage: ... edit <name>"),
+        "delete": lambda: cmd_delete(arg) if arg else print("Usage: ... delete <name>"),
+        "test": lambda: cmd_test(arg) if arg else print("Usage: ... test <name>"),
+        "search": lambda: cmd_search(arg) if arg else print("Usage: ... search <text>"),
+        "export": cmd_export,
+        "import": lambda: cmd_import(arg) if arg else print("Usage: ... import <file>"),
+    }
+
+    fn = commands.get(cmd)
+    if fn:
+        fn()
+    else:
+        print(f"Unknown command: {cmd}")
+        print(__doc__)
+
+
+if __name__ == "__main__":
+    main()

@@ -406,7 +406,7 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
         print(f"  [compress] failed: {e}")
 
 
-def run_task(task: str, config: dict | None = None) -> dict:
+def run_task(task: str, config: dict | None = None, record_mode: bool = False) -> dict:
     """Run a single task. Returns the finish report.
 
     Args:
@@ -680,6 +680,31 @@ def run_task(task: str, config: dict | None = None) -> dict:
                     if result.get("last_screenshot") is not None:
                         img = result["last_screenshot"]
     
+                    # Record mode: capture template on click / text input actions
+                    if record_mode and name in (
+                        "click", "paste_text", "type_keys", "launch_app", "wait",
+                        "uia_click", "scroll", "web_navigate", "web_click", "drag",
+                    ) and img is not None:
+                        try:
+                            from cua.recorder import record_template, add_macro_step
+                            px_x = int(mouse_pos[0] * screen_w)
+                            px_y = int(mouse_pos[1] * screen_h)
+                            meta = record_template(
+                                screenshot_bgr=img[..., :3],  # BGRA → BGR
+                                click_px=(px_x, px_y),
+                                mouse_normalized=mouse_pos,
+                                tool_name=name,
+                                tool_args=args,
+                            )
+                            if meta:
+                                add_macro_step(meta["template_id"])
+                                print(f"  [record] template: {meta['template_id']} "
+                                      f"ocr='{meta['ocr_text'][:40]}'")
+                            else:
+                                print(f"  [record] no button detected at click")
+                        except Exception as e:
+                            print(f"  [record] capture failed: {e}")
+
                     if name == "finish" and "_finish_report" in result:
                         result["_finish_report"]["tokens"] = token_usage
                         result["_finish_report"]["_tool_calls_log"] = _current_tool_log

@@ -1,0 +1,47 @@
+# WeChat search and send message
+# Usage: python cua/script_runner.py cua/data/scripts/example_wechat.cua [--step] [--debug]
+
+set target 火眼审阅
+set message 你好，这是一条测试消息
+
+launch 微信
+wait_until see 搜索 timeout 10
+
+if kimi Is the WeChat main chat list window visible on screen?
+    print WeChat is open — proceeding
+else
+    print WeChat not detected — retrying
+    launch 微信
+    wait 5
+    if kimi Is WeChat visible now?
+        print OK, WeChat opened
+    else
+        return 2 WeChat failed to launch — need K3 Agent to handle
+    endif
+endif
+
+click 搜索
+wait 0.5
+type $target
+wait 1
+
+if ocr $target
+    print Search result found
+else
+    click 搜索
+    wait 0.3
+    type $target
+    wait 1
+endif
+
+click $target
+wait 1
+
+scroll down 200
+wait 0.3
+
+click 输入
+type $message
+keys enter
+
+return 0 Message sent to $target
