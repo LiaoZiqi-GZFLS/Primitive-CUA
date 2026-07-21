@@ -30,11 +30,38 @@ _SIMILARITY_THRESHOLD = 0.65  # multilingual model — tuned from tests
 
 
 def _get_embedding_function():
-    """Get the shared multilingual embedding function."""
+    """Get the shared embedding function.
+
+    Prefers multilingual (Chinese+English, 384-dim). Falls back to local
+    ONNX English-only if unavailable.
+    """
     from chromadb.utils import embedding_functions
-    return embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="paraphrase-multilingual-MiniLM-L12-v2"
-    )
+
+    # Multilingual: Chinese+English, requires HuggingFace
+    try:
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="paraphrase-multilingual-MiniLM-L12-v2"
+        )
+        _ = ef(["test"])  # verify
+        print("  [embed] multilingual MiniLM-L12 (zh+en)")
+        return ef
+    except Exception:
+        pass
+
+    # Fallback: local ONNX
+    try:
+        ef = embedding_functions.ONNXMiniLM_L6_V2(
+            preferred_providers=["CPUExecutionProvider"]
+        )
+        print("  [embed] ONNX MiniLM-L6 (English only, offline)")
+        return ef
+    except Exception:
+        pass
+
+    print("  [embed] WARNING: no model, embeddings will be zero")
+    def _dummy(texts):
+        return [[0.0] * 384 for _ in texts]
+    return _dummy
 
 
 def _get_skills_collection():

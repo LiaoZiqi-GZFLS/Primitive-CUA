@@ -122,52 +122,26 @@ def cmd_add(name: str):
     import cv2
     import mss
     import pyautogui
-    from cua.recorder import record_template, _get_window_info
+    from cua.recorder import record_element, _get_window_info
 
-    # Deduplicate name
     name = _unique_name(name)
     print(f"Adding element: {name}")
-    print("Position your mouse on the target element...")
-    input("Press Enter when ready: ")
+
+    # Countdown then capture (elements are pure visual widgets)
+    print("  Move mouse to target...")
+    for i in range(5, 0, -1):
+        print(f"  {i}...")
+        time.sleep(1)
+    print("  Capturing!")
 
     mx, my = pyautogui.position()
-    sw, sh = pyautogui.size()
-    nx, ny = mx / sw, my / sh
 
-    tool = input("Tool type [click/paste_text/type_keys/launch_app/wait/"
-                 "scroll/web_navigate/drag/uia_click/web_click] (default=click): ").strip()
-    if not tool: tool = "click"
-
-    args = {}
-    if tool == "paste_text":
-        args["text"] = input("  Text: ").strip()
-    elif tool == "type_keys":
-        args["keys"] = input("  Keys: ").strip()
-    elif tool == "launch_app":
-        args["name"] = input("  App name: ").strip()
-    elif tool == "wait":
-        try: args["seconds"] = float(input("  Seconds: ").strip())
-        except: args["seconds"] = 1.0
-    elif tool == "scroll":
-        args["direction"] = input("  Direction [down/up]: ").strip() or "down"
-        try: args["amount"] = int(input("  Amount: ").strip() or "3")
-        except: args["amount"] = 3
-    elif tool == "web_navigate":
-        args["url"] = input("  URL: ").strip()
-    elif tool == "drag":
-        try:
-            args["from_x"] = float(input("  From X (0-1): ").strip())
-            args["from_y"] = float(input("  From Y (0-1): ").strip())
-            args["to_x"] = float(input("  To X (0-1): ").strip())
-            args["to_y"] = float(input("  To Y (0-1): ").strip())
-        except: print("Invalid coords"); return
-
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         img = np.array(sct.grab(sct.monitors[1]))[..., :3]
 
-    meta = record_template(
+    meta = record_element(
         screenshot_bgr=img, click_px=(mx, my),
-        mouse_normalized=(nx, ny), tool_name=tool, tool_args=args,
+        label=name,
     )
     if meta:
         print(f"  ✓ Element saved: {meta['template_id']}")
@@ -303,7 +277,7 @@ def cmd_test(name: str):
         print("Corrupt template image.")
         return
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         img = np.array(sct.grab(sct.monitors[1]))[..., :3]
 
     roi = el.get("roi", {})

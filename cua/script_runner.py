@@ -38,7 +38,8 @@ Usage:
   wait seconds                # Sleep
   scroll direction amount     # Scroll (dir=up/down, amount=pixels)
   navigate url                # Web browser
-  drag fx fy tx ty            # Mouse drag (normalized 0-1)
+  drag from_elem to_elem      # Drag from one element to another
+  drag from_elem dir dist      # Drag from element: up/down/left/right Npx
   screenshot [path]           # Save screenshot
   ocr [path]                  # OCR → $ocr_result
   move x y                    # Move mouse (normalized 0-1)
@@ -142,7 +143,7 @@ class ScriptEngine:
     REQUIRES_ARG = {
         "click", "uia_click", "web_click", "type", "keys", "launch",
         "goto", "label", "set", "scroll", "navigate", "wait_until",
-        "if", "while", "finish", "return", "wait", "drag", "fail",
+        "if", "while", "finish", "return", "wait", "fail",
     }
 
     def validate(self, script_path: str) -> list[str]:
@@ -178,6 +179,8 @@ class ScriptEngine:
             # Requires argument
             if cmd in self.REQUIRES_ARG and not args:
                 errors.append(f"  L{lineno}: '{cmd}' requires arguments")
+            if cmd == "drag" and len(args) not in (2, 3, 4):
+                errors.append(f"  L{lineno}: 'drag' needs 2/3/4 args (element-to-element, element+direction+distance, or raw coords)")
 
             # Block tracking
             if cmd in self.BLOCK_STARTS:
@@ -241,7 +244,7 @@ class ScriptEngine:
 
         self._lines = self._parse(raw)
         self._init_vars()
-        print(f"  [script] {path.name} ({len(self._lines)} commands) ✓ valid")
+        print(f"  [script] {path.name} ({len(self._lines)} commands) valid")
 
         return self._execute()
 
@@ -346,10 +349,10 @@ class ScriptEngine:
             inst = self._lines[ip]
             cmd = inst["cmd"]
 
-            # Block control
+            # Block control — compare indentation levels, not IPs
             if if_stack:
-                skip = any(inst["indent"] > iid and not cond
-                           for iid, _, cond in if_stack for iid in [iid])
+                skip = any(inst["indent"] > indent and not cond
+                           for _, indent, cond in if_stack)
                 if cmd == "else":
                     _, ei, pc = if_stack[-1]
                     if inst["indent"] == ei:
@@ -453,7 +456,7 @@ class ScriptEngine:
 
     def _do_fail(self, inst) -> ScriptResult:
         reason = " ".join(self._xa(inst["args"])) if inst["args"] else "script failed"
-        print(f"  ✗ FAIL: {reason}")
+        print(f"  FAIL: {reason}")
         return ScriptResult(1, reason,
                             step_count=self._step_count,
                             success_count=self._success_count)
@@ -527,9 +530,9 @@ class ScriptEngine:
             try:
                 h(args)
                 self._success_count += 1
-                print(f"  ✓ {cmd} {' '.join(args)[:60]}")
+                print(f"  OK {cmd} {' '.join(args)[:60]}")
             except Exception as e:
-                print(f"  ✗ {cmd} failed: {e}")
+                print(f"  FAIL {cmd}: {e}")
 
     # ── Actions ──
 
@@ -577,22 +580,79 @@ class ScriptEngine:
         execute_web_navigate(" ".join(args)); time.sleep(0.5)
 
     def _act_drag(self, args):
+        """Drag from one element to another, or from element in a direction.
+
+        Syntax:
+          drag "from_element" "to_element"  — drag between two named elements
+          drag "element" up|down|left|right N   — drag from element by N pixels
+          drag "element" angle_degrees N     — drag at angle (0=right, 90=down)
+        """
         import pyautogui
-        fx, fy, tx, ty = map(float, args[:4])
-        sw, sh = pyautogui.size()
-        pyautogui.moveTo(int(fx * sw), int(fy * sh))
-        pyautogui.drag(int((tx - fx) * sw), int((ty - fy) * sh), duration=0.3)
+
+        if len(args) == 2:
+            # Element-to-element: find both via template matching
+            from_pt = self._find_template(args[0])
+            to_pt = self._find_template(args[1])
+            if from_pt and to_pt:
+                pyautogui.moveTo(from_pt[0], from_pt[1])
+                pyautogui.mouseDown()
+                pyautogui.moveTo(to_pt[0], to_pt[1], duration=0.5)
+                pyautogui.mouseUp()
+                time.sleep(0.3)
+            elif from_pt:
+                print(f"  drag: element '{args[1]}' not found — falling back")
+                # Fallback: interpret as direction
+                self._drag_direction(from_pt, args[1])
+            else:
+                print(f"  drag: source element '{args[0]}' not found")
+
+        elif len(args) == 3:
+            # Element + direction + distance
+            from_pt = self._find_template(args[0])
+            if from_pt:
+                self._drag_direction(from_pt, args[1], args[2])
+            else:
+                print(f"  drag: element '{args[0]}' not found")
+
+        elif len(args) == 4:
+            # Legacy: raw coordinates
+            fx, fy, tx, ty = map(float, args[:4])
+            sw, sh = pyautogui.size()
+            pyautogui.moveTo(int(fx * sw), int(fy * sh))
+            pyautogui.drag(int((tx - fx) * sw), int((ty - fy) * sh), duration=0.3)
+            time.sleep(0.3)
+
+    def _drag_direction(self, from_pt, direction, distance="100"):
+        """Drag from a point in a direction for a given distance."""
+        import pyautogui, math
+        try: dist = int(distance) if isinstance(distance, str) else distance
+        except: dist = 100
+
+        dirs = {"up": -90, "down": 90, "left": 180, "right": 0}
+        angle = dirs.get(str(direction).lower(), None)
+        if angle is None:
+            try: angle = float(direction)
+            except: angle = 0
+
+        rad = math.radians(angle)
+        dx = int(dist * math.cos(rad))
+        dy = int(dist * math.sin(rad))
+
+        pyautogui.moveTo(from_pt[0], from_pt[1])
+        pyautogui.mouseDown()
+        pyautogui.moveTo(from_pt[0] + dx, from_pt[1] + dy, duration=0.5)
+        pyautogui.mouseUp()
         time.sleep(0.3)
 
     def _act_screenshot(self, args):
         import cv2, mss
         path = args[0] if args else f"screenshot_{int(time.time())}.png"
-        img = np.array(mss.mss().grab(mss.mss().monitors[1])); cv2.imwrite(path, img[..., :3])
+        img = np.array(mss.MSS().grab(mss.MSS().monitors[1])); cv2.imwrite(path, img[..., :3])
 
     def _act_ocr(self, args):
         import mss
         from cua.tools.screenshot import _get_ocr_engine
-        img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+        img = np.array(mss.MSS().grab(mss.MSS().monitors[1]))
         engine = _get_ocr_engine(); results, _ = engine(img[..., [2, 1, 0]])
         self.vars["ocr_result"] = " ".join(r[1] for r in (results or [])
                                            if r[2] and float(r[2]) > 0.5)[:200]
@@ -625,7 +685,7 @@ class ScriptEngine:
                 import cv2, mss
                 tm_bgr = cv2.imread(path)
                 if tm_bgr is not None:
-                    with mss.mss() as sct:
+                    with mss.MSS() as sct:
                         img = np.array(sct.grab(sct.monitors[1]))[...,:3]
                     from cua.fast_replay import _template_match
                     pt, sc = _template_match(img, tm_bgr,
@@ -643,7 +703,7 @@ class ScriptEngine:
     def _check_ocr(self, t):
         import mss; from cua.tools.screenshot import _get_ocr_engine
         try:
-            img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+            img = np.array(mss.MSS().grab(mss.MSS().monitors[1]))
             e = _get_ocr_engine(); r, _ = e(img[...,[2,1,0]])
             return t.lower() in " ".join(x[1].lower() for x in (r or [])
                                          if x[2] and float(x[2]) > 0.5)
@@ -671,7 +731,7 @@ class ScriptEngine:
         client = OpenAI(api_key=ak, base_url=base_url)
         import mss
         from cua.tools.screenshot import downsample_for_vlm, _np_to_png_b64
-        img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+        img = np.array(mss.MSS().grab(mss.MSS().monitors[1]))
         sc,_,_ = downsample_for_vlm(img,(0.5,0.5),img.shape[1],img.shape[0])
         try:
             r=client.chat.completions.create(
@@ -719,11 +779,11 @@ def main():
     result = engine.run(path)
     print(f"\n  Return code: {result.code}")
     if result.code == 0:
-        print(f"  ✓ {result.summary}")
+        print(f"  SUCCESS: {result.summary}")
     elif result.code == 1:
-        print(f"  ✗ {result.summary}")
+        print(f"  FAILED: {result.summary}")
     else:
-        print(f"  ↪ Delegate to K3: {result.summary}")
+        print(f"  DELEGATE to K3: {result.summary}")
 
 
 if __name__ == "__main__":

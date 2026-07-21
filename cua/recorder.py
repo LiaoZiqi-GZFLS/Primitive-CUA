@@ -20,6 +20,30 @@ import numpy as np
 DATA_DIR = Path(__file__).parent / "data" / "templates"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# Name cache for O(1) dedup
+_existing_names: set[str] | None = None
+
+
+def _refresh_name_cache():
+    global _existing_names
+    _existing_names = set()
+    if not DATA_DIR.exists():
+        return
+    for p in DATA_DIR.rglob("*.json"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            _existing_names.add(d.get("ocr_text", ""))
+        except Exception:
+            pass
+
+
+def _get_name_cache() -> set[str]:
+    global _existing_names
+    if _existing_names is None:
+        _refresh_name_cache()
+    return _existing_names
+
 # Cache of existing OCR text names — loaded once to avoid disk scan on every record
 _existing_names: set[str] | None = None
 
@@ -90,56 +114,103 @@ def _embed_text(text: str) -> np.ndarray:
     try:
         ef = _get_embed_fn()
         vec = np.array(ef([text])[0], dtype=np.float16)
+        if not vec.any():
+            _embed_text._warned = getattr(_embed_text, "_warned", False)
+            if not _embed_text._warned:
+                print("  [embed] WARNING: zero vector returned — model may be unavailable")
+                _embed_text._warned = True
         return vec
-    except Exception:
+    except Exception as e:
+        _embed_text._warned = getattr(_embed_text, "_warned", False)
+        if not _embed_text._warned:
+            print(f"  [embed] WARNING: {e} — embeddings will be zero")
+            _embed_text._warned = True
         return np.zeros(384, dtype=np.float16)
 
 
 # --- Window info ---
 
 
+def _get_window_at_point(px: int, py: int) -> int | None:
+    """Get the HWND of the window under the given screen coordinates.
+
+    This finds the actual target window under the mouse, not the foreground
+    window (which might be the terminal during manual recording).
+    """
+    try:
+        import win32gui
+        return win32gui.WindowFromPoint((px, py))
+    except ImportError:
+        import ctypes
+        from ctypes import wintypes
+        try:
+            pt = wintypes.POINT(px, py)
+            return ctypes.windll.user32.WindowFromPoint(pt)
+        except Exception:
+            return None
+
+
 def _get_window_info(hwnd: int = None) -> dict:
-    """Capture window metadata for a given HWND (or foreground if None)."""
-    import win32gui
-    import win32process
+    """Capture window metadata for a given HWND (or foreground if None).
 
-    if hwnd is None:
-        hwnd = win32gui.GetForegroundWindow()
+    Uses win32gui if available, falls back to ctypes Windows API.
+    """
+    import ctypes
+    from ctypes import wintypes
 
-    info = {"hwnd": hwnd, "title": "", "class": "", "pid": 0, "rect": [0, 0, 0, 0]}
+    info = {"hwnd": hwnd or 0, "title": "", "class": "", "pid": 0, "rect": [0, 0, 0, 0]}
 
     try:
-        info["title"] = win32gui.GetWindowText(hwnd)
-    except Exception:
-        pass
-    try:
-        info["class"] = win32gui.GetClassName(hwnd)
-    except Exception:
-        pass
-    try:
-        rect = win32gui.GetWindowRect(hwnd)  # (left, top, right, bottom)
-        info["rect"] = [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]
-    except Exception:
-        pass
-    try:
-        _, info["pid"] = win32process.GetWindowThreadProcessId(hwnd)
-    except Exception:
-        pass
+        import win32gui; import win32process; _use_win32 = True
+    except ImportError:
+        _use_win32 = False
 
+    if _use_win32:
+        if hwnd is None:
+            hwnd = win32gui.GetForegroundWindow(); info["hwnd"] = hwnd
+        try: info["title"] = win32gui.GetWindowText(hwnd)
+        except: pass
+        try: info["class"] = win32gui.GetClassName(hwnd)
+        except: pass
+        try: r = win32gui.GetWindowRect(hwnd); info["rect"] = [r[0], r[1], r[2]-r[0], r[3]-r[1]]
+        except: pass
+        try: _, info["pid"] = win32process.GetWindowThreadProcessId(hwnd)
+        except: pass
+    else:
+        user32 = ctypes.windll.user32
+        if hwnd is None:
+            hwnd = user32.GetForegroundWindow(); info["hwnd"] = hwnd
+        buf = ctypes.create_unicode_buffer(256)
+        try: user32.GetWindowTextW(hwnd, buf, 256); info["title"] = buf.value or ""
+        except: pass
+        try: user32.GetClassNameW(hwnd, buf, 256); info["class"] = buf.value or ""
+        except: pass
+        try:
+            r = wintypes.RECT(); user32.GetWindowRect(hwnd, ctypes.byref(r))
+            info["rect"] = [r.left, r.top, r.right-r.left, r.bottom-r.top]
+        except: pass
     return info
 
 
 def _get_top_level_window(hwnd: int) -> int:
     """Walk up to find the top-level owner window."""
-    import win32gui
     try:
-        while True:
-            owner = win32gui.GetWindow(hwnd, 4)  # GW_OWNER
-            if not owner:
-                break
-            hwnd = owner
-    except Exception:
-        pass
+        import win32gui
+        try:
+            while True:
+                owner = win32gui.GetWindow(hwnd, 4)
+                if not owner: break
+                hwnd = owner
+        except Exception: pass
+    except ImportError:
+        import ctypes
+        user32 = ctypes.windll.user32
+        try:
+            while True:
+                owner = user32.GetWindow(hwnd, 4)
+                if not owner: break
+                hwnd = owner
+        except Exception: pass
     return hwnd
 
 
@@ -262,125 +333,74 @@ def _crop_button_around_click(
 # --- Record template ---
 
 
-def record_template(
+
+
+def record_element(
     screenshot_bgr: np.ndarray,
     click_px: tuple[int, int],
-    mouse_normalized: tuple[float, float],
-    tool_name: str,
-    tool_args: dict,
     window_hwnd: int = None,
+    label: str = "",
 ) -> dict | None:
-    """Record a button template from a click action.
+    """Record a UI element — a visual widget (button, icon, clickable area).
 
-    Returns metadata dict with storage paths, or None if extraction fails.
+    Elements are pure visual data: cropped image, position, OCR text, hash,
+    and embedding. They do NOT store tool type or action args — those belong
+    to the macro step that uses the element.
     """
     import cv2
 
-    # 1. Window info
-    win = _get_window_info(window_hwnd)
+    # 1. Window info — use the window under the click point, not foreground
+    hwnd_at_point = _get_window_at_point(click_px[0], click_px[1])
+    win = _get_window_info(hwnd_at_point or window_hwnd)
     top_hwnd = _get_top_level_window(win["hwnd"])
 
-    # 2. Crop button (click only — text actions skip visual cropping)
-    # Actions that crop a visual button: click, uia_click, web_click
-    _visual_actions = ("click", "uia_click", "web_click")
-    # Actions that store parameters only, no visual crop
-    _text_actions = ("paste_text", "type_keys", "launch_app", "wait",
-                     "scroll", "web_navigate", "drag")
+    # 2. Crop button
+    button_img = _crop_button_around_click(screenshot_bgr, click_px)
+    if button_img is None:
+        return None
 
-    is_text_action = tool_name in _text_actions
-    is_visual = tool_name in _visual_actions
-    button_img = None
-    if is_visual:
-        button_img = _crop_button_around_click(screenshot_bgr, click_px)
-        if button_img is None:
-            return None  # visual actions require a croppable button
+    # 3. dHash
+    dh = _dhash(button_img)
 
-    # 3. Compute dHash
-    dh = _dhash(button_img) if button_img is not None else 0
+    # 4. ROI
+    win_left, win_top = win["rect"][0], win["rect"][1]
+    roi_x = click_px[0] - win_left
+    roi_y = click_px[1] - win_top
+    roi_w, roi_h = button_img.shape[1], button_img.shape[0]
 
-    # 4. OCR text
-    button_text = ""
-    if is_text_action:
-        if tool_name == "launch_app":
-            button_text = f"launch: {tool_args.get('name', '')}"[:100]
-        elif tool_name == "wait":
-            button_text = f"wait: {tool_args.get('seconds', 0)}s"
-        elif tool_name == "scroll":
-            button_text = f"scroll: {tool_args.get('direction', 'down')} x{tool_args.get('amount', 3)}"[:100]
-        elif tool_name == "web_navigate":
-            button_text = f"navigate: {tool_args.get('url', '')}"[:100]
-        elif tool_name == "drag":
-            button_text = f"drag: ({tool_args.get('from_x',0):.2f},{tool_args.get('from_y',0):.2f})→({tool_args.get('to_x',0):.2f},{tool_args.get('to_y',0):.2f})"[:100]
-        else:
-            button_text = str(tool_args.get("text", tool_args.get("keys", "")))[:100]
-    elif button_img is not None:
+    # 5. OCR or label
+    name = label[:80] if label else ""
+    if not name:
         try:
             from cua.tools.screenshot import _get_ocr_engine
             ocr = _get_ocr_engine()
             results, _ = ocr(button_img)
             if results:
                 texts = [r[1] for r in results if r[2] and float(r[2]) > 0.6]
-                button_text = " ".join(texts)[:100]
+                name = " ".join(texts)[:100]
         except Exception:
             pass
 
-    # 4b. Three-part name: {app}-{position}-{function}
-    #     "搜索" → "微信-顶栏-搜索", "OK" → "记事本-底部-确定"
+    # 6. Auto-name: {app}-{position}-{function}
     import re
     app_hint = ""
     win_title = win.get("title", "")
-    if win_title:
+    win_class = win.get("class", "")
+    if win_class.lower() in ("progman", "workerw"):
+        app_hint = "桌面"
+    elif win_title:
         zh = re.findall(r'[一-鿿㐀-䶿]{2,8}', win_title)
-        if zh:
-            app_hint = zh[0][:8]
+        if zh: app_hint = zh[0][:8]
         else:
             en = re.findall(r'[a-zA-Z]{2,16}', win_title)
             if en and en[0].lower() not in ('the','and','for','not','doc','new','untitled','document'):
                 app_hint = en[0][:12]
 
-    # Component: detect sub-panel/tab from window title or UIA
-    component = ""
-    if win_title:
-        # "火眼审阅 – 微信" → component = "火眼审阅"
-        # "某文章 - Google Chrome" → component = "某文章"
-        # "无标题 - 记事本" → no component (just the app)
-        import re
-        # Split on common separators
-        parts = re.split(r'\s*[-–—|]\s*', win_title)
-        for p in parts:
-            p = p.strip()
-            # Skip if it's just the app name we already have
-            if app_hint and app_hint in p:
-                continue
-            # Skip known browser suffixes
-            if re.match(r'(Google Chrome|Microsoft Edge|Firefox)$', p):
-                continue
-            # Must have meaningful content
-            if len(p) >= 2 and p.lower() not in ('无标题','untitled','new tab','新标签页'):
-                component = p[:12]
-                break
-    # Try UIA for component detection
-    if not component:
-        try:
-            from cua.tools.uia import _foreground_control
-            fg = _foreground_control()
-            if fg:
-                # Check for TabControl or Pane with distinct names
-                for child in fg.GetChildren()[:5]:
-                    ct = child.ControlTypeName
-                    cn = (child.Name or "").strip()
-                    if ct in ("TabControl", "Tab", "TabItem") and cn and len(cn) >= 2:
-                        component = cn[:12]
-                        break
-        except Exception:
-            pass
-
-    # Position from ROI within window
+    # Position from ROI
     win_h = win["rect"][3] if win["rect"][3] > 0 else 1
     win_w = win["rect"][2] if win["rect"][2] > 0 else 1
-    rel_y = roi_y / win_h if is_visual else 0.5
-    rel_x = roi_x / win_w if is_visual else 0.5
-
+    rel_y = roi_y / win_h
+    rel_x = roi_x / win_w
     if rel_y < 0.12:      pos = "标题栏"
     elif rel_y < 0.22:    pos = "顶栏"
     elif rel_y < 0.35:    pos = "上部"
@@ -388,87 +408,56 @@ def record_template(
     elif rel_y < 0.80:    pos = "下部"
     elif rel_y < 0.92:    pos = "底部"
     else:                 pos = "底栏"
-
     if rel_x < 0.25 and rel_y < 0.22: pos = "左上"
     elif rel_x > 0.75 and rel_y < 0.22: pos = "右上"
 
-    # Assemble: {app}-{component}-{position}-{function}
-    if app_hint and button_text and not button_text.startswith(app_hint) and is_visual:
-        parts = [app_hint]
-        if component:
-            parts.append(component)
-        parts.extend([pos, button_text])
-        button_text = "-".join(parts)[:80]
+    # Assemble name (skip assembly if label was explicitly given)
+    if not label:
+        if app_hint == "桌面" and not name:
+            name = f"{app_hint}-{pos}-图标"[:80]
+        elif app_hint and name and not name.startswith(app_hint):
+            name = f"{app_hint}-{pos}-{name}"[:80]
 
-    # 4c. Deduplicate — check name cache and add hash suffix if collision
-    if button_text and not is_text_action:
-        cache = _get_name_cache()
-        if button_text in cache:
-            button_text = f"{button_text}_{dh:04x}"[:80]
-        cache.add(button_text)  # update cache for future checks
+    # 7. Dedup
+    cache = _get_name_cache()
+    if name in cache:
+        name = f"{name}_{dh:04x}"[:80]
+    cache.add(name)
 
-    # 5. Embedding from core text (without hash suffix) for better matching
-    clean_text = button_text.split("_")[0] if "_" in button_text else button_text
+    # 8. Embedding
+    clean_text = name.split("_")[0] if "_" in name else name
     vec = _embed_text(clean_text[:60])
 
-    # 6. ROI relative to top-level window
-    win_left, win_top = win["rect"][0], win["rect"][1]
-    roi_x = click_px[0] - win_left
-    roi_y = click_px[1] - win_top
-    roi_w = button_img.shape[1] if button_img is not None else 100
-    roi_h = button_img.shape[0] if button_img is not None else 30
-
-    # 7. Generate template ID and save
+    # 9. Save
     safe_class = "".join(c if c.isalnum() or c in "-_" else "_" for c in win["class"])[:40]
     timestamp = int(time.time() * 1000)
-    template_id = f"{safe_class}_{tool_name}_{dh:016x}_{timestamp}"[:80]
+    template_id = f"{safe_class}_{dh:016x}_{timestamp}"[:80]
 
-    # Save image (only for visual buttons)
     img_dir = DATA_DIR / safe_class
     img_dir.mkdir(parents=True, exist_ok=True)
     img_path = img_dir / f"{template_id}.png"
-    if button_img is not None:
-        cv2.imwrite(str(img_path), button_img)
-    else:
-        # Save a placeholder for text actions
-        cv2.imwrite(str(img_path), np.zeros((30, 100, 3), dtype=np.uint8))
+    cv2.imwrite(str(img_path), button_img)
 
-    # Build metadata
     meta = {
-        "template_id": template_id,
-        "timestamp": timestamp,
-        "tool": tool_name,
-        "args": tool_args,
-        "window": {
-            "hwnd": win["hwnd"],
-            "top_hwnd": top_hwnd,
-            "class": win["class"],
-            "title": win["title"][:200],
-            "pid": win["pid"],
-            "rect": win["rect"],
-        },
-        "roi": {
-            "x": roi_x,
-            "y": roi_y,
-            "w": roi_w,
-            "h": roi_h,
-        },
-        "click": {
-            "px": list(click_px),
-            "normalized": list(mouse_normalized),
-        },
+        "template_id": template_id, "timestamp": timestamp,
+        "ocr_text": name,
+        "window": {"hwnd": win["hwnd"], "top_hwnd": top_hwnd,
+                   "class": win["class"], "title": win["title"][:200],
+                   "pid": win["pid"], "rect": win["rect"]},
+        "roi": {"x": roi_x, "y": roi_y, "w": roi_w, "h": roi_h},
+        "click_px": list(click_px),
         "dhash": f"{dh:016x}",
-        "ocr_text": button_text,
-        "embedding_384": vec.tobytes().hex(),  # full 768 hex chars (384 x float16)
+        "embedding_384": vec.tobytes().hex(),
         "image_path": str(img_path),
     }
-
-    # Save metadata
     meta_path = img_dir / f"{template_id}.json"
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-
     return meta
+
+
+# Backward-compat alias
+record_template = record_element
 
 
 # --- Fast lookup for replay ---

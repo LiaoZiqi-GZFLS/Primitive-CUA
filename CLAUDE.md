@@ -26,12 +26,16 @@ The project targets the **Kimi K3** model via `https://api.moonshot.cn/v1`. Full
 ```
 Primitive-CUA/
 ├── docs/
-│   └── kimi-api/
-│       ├── kimi_k3.md                    # Kimi K3 API reference (current model)
-│       └── kimi_k2.6_api_reference.md    # Legacy K2.6 API docs
+│   ├── kimi-api/
+│   │   ├── kimi_k3.md                    # Kimi K3 API reference (current)
+│   │   └── kimi_k2.6_api_reference.md    # Legacy K2.6 API docs
+│   └── scripts/
+│       ├── SCRIPT_ENGINE.md              # Script engine reference
+│       └── MACRO_GUIDE.md                # Macro recording & playback guide
 ├── .gitignore                            # Python-focused gitignore
 ├── LICENSE                               # BSD 3-Clause
-└── README.md                             # Placeholder
+├── README.md                             # Project readme
+└── CLAUDE.md                             # This file
 ```
 
 ## Development
@@ -50,6 +54,18 @@ python cua/cli.py
 
 # Single task
 python cua/cli.py "打开记事本并输入hello world"
+
+# Record element templates during execution
+python cua/cli.py --record "打开微信搜索"
+
+# Fast replay using recorded templates (no AI for L0/L1)
+python cua/cli.py --replay "微信搜索"
+
+# Execute a .cua automation script
+python cua/cli.py --script path/to/script.cua
+
+# Script validation only (no execution)
+python cua/script_runner.py script.cua --check
 ```
 
 Environment variable required: `MOONSHOT_API_KEY`.
@@ -63,8 +79,13 @@ python cua/test_overlay.py
 ### Architecture
 
 ```
-cli.py          → Interactive CLI, reads tasks, prints finish reports
+cli.py          → Interactive CLI with --record/--replay/--script flags
 agent.py        → Core agent loop: Kimi K3 tool-calling cycle + prompt management
+recorder.py     → Element recording (PNG+dHash+embedding+OCR) + macro storage
+fast_replay.py  → Fast replay engine (L0 pixel/L1 embedding/L2 K3) + self-healing
+script_runner.py→ .cua script engine with variables, branches, perception, return codes
+element_manager.py→ Standalone UI element management (add/list/preview/rename/delete)
+macro_editor.py → Macro recording/playback with step confirmation
 overlay.py      → Draws virtual mouse cursor (red crosshair + circle) on screenshots
 config.py       → YAML config loader with env var fallback
 learning.py     → Four-layer learning: AutoSkill (ChromaDB), Reflection, Pending, Knowledge base
@@ -104,3 +125,5 @@ knowledge/
 - **Prompt architecture**: SYSTEM_PROMPT in agent.py defines tool usage guidance and critical rules. THINK_PROMPT in think.py structures reflection. OCR/verify prompts are inline in agent.py. Learning prompts in learning.py.
 - **No context between rounds**: Each CLI task builds a fresh `messages` list (learning system persists via SQLite + ChromaDB)
 - **Tool ordering matters**: The agent is single-threaded; tool calls execute sequentially within each API response
+- **Record & Replay system**: Elements are pure visual widgets (image + dHash + embedding + ROI). Macros are recorded step sequences. Scripts are text DSL with logic. Three execution tiers: L0 OpenCV pixel match (<10ms), L1 MiniLM embedding match (~100ms), L2 K3 Agent fallback (~5s).
+- **Embedding model**: Multilingual MiniLM-L12 (zh+en, 384-dim) preferred, falls back to ONNX MiniLM-L6 (English only, offline). Model loaded lazily, cached globally.

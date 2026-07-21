@@ -18,7 +18,7 @@ import numpy as np
 
 from cua.recorder import (
     MACRO_DIR, DATA_DIR, list_macros, load_macro, save_macro,
-    record_template, _get_window_info, _embed_text,
+    record_element, _get_window_info, _embed_text,
 )
 
 
@@ -215,19 +215,15 @@ def cmd_record(name: str, task: str):
     steps = []
     step_count = 0
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         monitor = sct.monitors[1]
 
         while True:
             step_count += 1
             print(f"\n--- Step {step_count} ---")
 
-            # Capture current mouse position
-            mx, my = pyautogui.position()
-            sw, sh = monitor["width"], monitor["height"]
-            nx, ny = mx / sw, my / sh
-            print(f"Mouse at: ({mx}, {my}) = ({nx:.4f}, {ny:.4f}) normalized")
-
+            # Ask tool type FIRST, then capture — avoids delay between
+            # mouse positioning and screenshot
             print("Tools: click / uia_click / web_click / paste_text / type_keys")
             print("       launch_app / wait / scroll / web_navigate / drag")
             tool = input("Tool [default=click]: ").strip()
@@ -271,40 +267,46 @@ def cmd_record(name: str, task: str):
                     step_count -= 1
                     continue
 
+            # 5-second countdown — position mouse during this time
+            print("  Move mouse to target...")
+            for i in range(5, 0, -1):
+                print(f"  {i}...")
+                time.sleep(1)
+            print("  Capturing!")
+
+            mx, my = pyautogui.position()
+            sw, sh = monitor["width"], monitor["height"]
+            nx, ny = mx / sw, my / sh
+            print(f"  Mouse at: ({mx}, {my}) = ({nx:.4f}, {ny:.4f})")
+
             # Capture screenshot and record
             img_bgra = np.array(sct.grab(monitor))
             img_bgr = img_bgra[..., :3]
 
-            meta = record_template(
-                screenshot_bgr=img_bgr,
-                click_px=(mx, my),
-                mouse_normalized=(nx, ny),
-                tool_name=tool,
-                tool_args=args,
-            )
-            if meta:
-                steps.append(meta)
-                print(f"  ✓ Captured: {meta['template_id']}")
+            # Record element (visual only) or text action
+            if tool in ("click", "uia_click", "web_click"):
+                meta = record_element(screenshot_bgr=img_bgr, click_px=(mx, my))
+                if meta:
+                    meta["tool"] = tool
+                    meta["args"] = args
+                    steps.append(meta)
+                    print(f"  Captured: {meta['template_id']}")
+                else:
+                    print(f"  No button detected")
             else:
-                print(f"  ⚠ No visual button detected — saving as text-only step")
-                from cua.recorder import _get_window_info
-                win = _get_window_info()
+                # Text action — store directly
+                ts = int(time.time() * 1000)
                 meta = {
-                    "template_id": f"manual_{tool}_{int(time.time()*1000)}",
-                    "tool": tool,
-                    "args": args,
+                    "template_id": f"text_{tool}_{ts}",
+                    "tool": tool, "args": args,
                     "ocr_text": args.get("text", args.get("name", args.get("keys", ""))),
-                    "roi": {"x": mx - win["rect"][0], "y": my - win["rect"][1],
-                             "w": 100, "h": 30},
-                    "image_path": "",
-                    "embedding_384": "",
-                    "dhash": "0",
-                    "window": {"class": win.get("class", ""),
-                               "title": win.get("title", ""),
-                               "pid": win.get("pid", 0),
-                               "rect": win.get("rect", [0, 0, 0, 0])},
+                    "roi": {"x": mx, "y": my, "w": 100, "h": 30},
+                    "image_path": "", "embedding_384": "", "dhash": "0",
+                    "window": {"class": "", "title": "", "pid": 0, "rect": [0, 0, 0, 0]},
                 }
                 steps.append(meta)
+                print(f"  Captured: {tool} action")
+                continue
 
     if steps:
         path = save_macro(name, task, steps)

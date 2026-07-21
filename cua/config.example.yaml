@@ -11,8 +11,18 @@ max_completion_tokens: 131072  # Max tokens per API call (K3 default, max 104857
 # Agent loop
 max_iterations: 100           # Max tool-calling iterations per task
 
-# Screenshot
-jpeg_quality: 85              # JPEG compression quality (1-100)
+# Record & Replay
+record:
+  enabled: true                # Auto-record elements during agent execution
+  dedup_cache: true            # O(1) name cache for faster recording
+replay:
+  l0_threshold: 0.70          # OpenCV template match minimum score
+  l1_threshold: 0.60          # Embedding match minimum similarity
+  roi_margin: 100             # ROI expansion pixels for window offset
+  max_steps: 15               # Max steps per replay
+script:
+  auto_improve: true           # K3 reviews recorded macros and adds guards
+  embed_model: "auto"         # auto=multilingual, onnx=English, or path
 
 # Overlay style
 overlay:

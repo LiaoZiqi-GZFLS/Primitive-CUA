@@ -472,7 +472,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
     from cua.replay import TrajectoryRecorder
     recorder = TrajectoryRecorder(task)
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         monitor = sct.monitors[1]
         screen_w = monitor["width"]
         screen_h = monitor["height"]
@@ -680,28 +680,39 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                     if result.get("last_screenshot") is not None:
                         img = result["last_screenshot"]
     
-                    # Record mode: capture template on click / text input actions
-                    if record_mode and name in (
-                        "click", "paste_text", "type_keys", "launch_app", "wait",
-                        "uia_click", "scroll", "web_navigate", "web_click", "drag",
-                    ) and img is not None:
+                    # Record mode: capture visual element or text action
+                    _RECORD_VISUAL = ("click", "uia_click", "web_click")
+                    _RECORD_TEXT = ("paste_text", "type_keys", "launch_app", "wait",
+                                    "scroll", "web_navigate", "drag")
+                    if record_mode and name in _RECORD_VISUAL + _RECORD_TEXT and img is not None:
                         try:
-                            from cua.recorder import record_template, add_macro_step
+                            from cua.recorder import record_element, add_macro_step
                             px_x = int(mouse_pos[0] * screen_w)
                             px_y = int(mouse_pos[1] * screen_h)
-                            meta = record_template(
-                                screenshot_bgr=img[..., :3],  # BGRA → BGR
-                                click_px=(px_x, px_y),
-                                mouse_normalized=mouse_pos,
-                                tool_name=name,
-                                tool_args=args,
-                            )
-                            if meta:
-                                add_macro_step(meta["template_id"])
-                                print(f"  [record] template: {meta['template_id']} "
-                                      f"ocr='{meta['ocr_text'][:40]}'")
+
+                            if name in _RECORD_VISUAL:
+                                # Visual widget — record as element
+                                meta = record_element(
+                                    screenshot_bgr=img[..., :3],
+                                    click_px=(px_x, px_y),
+                                )
+                                if meta:
+                                    if "tool" not in meta:
+                                        meta["tool"] = name
+                                        meta["args"] = args
+                                    add_macro_step(meta["template_id"])
+                                    print(f"  [record] element: {meta['ocr_text'][:40]}")
+                                else:
+                                    print(f"  [record] no button detected at click")
                             else:
-                                print(f"  [record] no button detected at click")
+                                # Text action — record directly as macro step
+                                ts = int(time.time() * 1000)
+                                safe_cls = "".join(c if c.isalnum() or c in "-_" else "_"
+                                                  for c in (name or "unknown"))[:20]
+                                tid = f"text_{safe_cls}_{ts}"
+                                add_macro_step(tid)
+                                print(f"  [record] action: {name} "
+                                      f"{str(args)[:60]}")
                         except Exception as e:
                             print(f"  [record] capture failed: {e}")
 

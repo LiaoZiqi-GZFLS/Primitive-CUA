@@ -553,7 +553,7 @@ def _execute_steps(task: str, config: dict, steps: list[dict],
     win_offset_x, win_offset_y = win_rect[0], win_rect[1]
 
     # Select correct monitor and capture
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         monitor = sct.monitors[1]
         for mon in sct.monitors[1:]:
             if (mon["left"] <= win_offset_x < mon["left"] + mon["width"] and
@@ -561,7 +561,7 @@ def _execute_steps(task: str, config: dict, steps: list[dict],
                 monitor = mon
                 break
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         for i, tmpl in enumerate(steps):
             step_name = tmpl.get("tool", "click")
             # ROI relative to window → convert to screen coords
@@ -623,14 +623,9 @@ def _execute_steps(task: str, config: dict, steps: list[dict],
                     args = tmpl.get("args", {})
                     fx, fy = args.get("from_x", 0), args.get("from_y", 0)
                     tx, ty = args.get("to_x", 0), args.get("to_y", 0)
-                    import win32gui
-                    rect = win32gui.GetWindowRect(window_hwnd)
-                    sx = rect[0] + int(fx * (rect[2] - rect[0]))
-                    sy = rect[1] + int(fy * (rect[3] - rect[1]))
-                    ex = rect[0] + int(tx * (rect[2] - rect[0]))
-                    ey = rect[1] + int(ty * (rect[3] - rect[1]))
-                    pyautogui.moveTo(sx, sy)
-                    pyautogui.drag(ex - sx, ey - sy, duration=0.3)
+                    sw, sh = pyautogui.size()
+                    pyautogui.moveTo(int(fx * sw), int(fy * sh))
+                    pyautogui.drag(int((tx - fx) * sw), int((ty - fy) * sh), duration=0.3)
                     time.sleep(0.3)
                 success_count += 1
                 tool_log.append(f"[sys] {step_name}: '{expected_text[:30]}'")
@@ -760,7 +755,7 @@ def _self_heal(task: str, steps: list[dict], tool_log: list[str],
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     # Capture current screen
-    img = np.array(mss.mss().grab(mss.mss().monitors[1]))
+    img = np.array(mss.MSS().grab(mss.MSS().monitors[1]))
     from cua.tools.screenshot import downsample_for_vlm, _np_to_png_b64
     scaled, _, _ = downsample_for_vlm(img, (0.5, 0.5), img.shape[1], img.shape[0])
 

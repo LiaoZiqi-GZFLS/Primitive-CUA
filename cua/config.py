@@ -12,7 +12,6 @@ DEFAULTS = {
     "base_url": "https://api.moonshot.cn/v1",
     "max_completion_tokens": 131072,  # K3 uses max_completion_tokens (max_tokens also accepted)
     "max_iterations": 100,
-    "jpeg_quality": 85,
     "overlay": {
         "circle_radius": 15,
         "outer_radius": 18,
