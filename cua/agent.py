@@ -355,6 +355,7 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
                 {"role": "user", "content": trace_text},
             ],
             max_tokens=300,
+            reasoning_effort="low",
         )
         summary = resp.choices[0].message.content or ""
 
@@ -430,6 +431,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
     model = config.get("model", "kimi-k3")
     base_url = config.get("base_url", "https://api.moonshot.cn/v1")
     max_tokens = config.get("max_completion_tokens") or config.get("max_tokens", 131072)
+    reasoning_effort = config.get("reasoning_effort", "low")
     max_iterations = config.get("max_iterations", 50)
 
     # Create OpenAI-compatible client
@@ -566,7 +568,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                         messages=messages,
                         tools=active_tools,
                         max_completion_tokens=max_tokens,
-                        reasoning_effort="max",
+                        reasoning_effort=reasoning_effort,
                     )
                 except openai.AuthenticationError:
                     raise  # Auth errors are not retryable
@@ -868,6 +870,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                                 model=model,
                                 messages=clean_messages,
                                 max_tokens=512,
+                                reasoning_effort="low",
                             )
                             cleaned_ocr = clean_resp.choices[0].message.content or ""
                             if hasattr(clean_resp, "usage") and clean_resp.usage:
@@ -975,6 +978,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                                 messages=analyst_messages,
                                 max_tokens=256,
                                 response_format={"type": "json_object"},
+                                reasoning_effort="low",
                             )
                             raw_analyst = analysis.choices[0].message.content or ""
                             if hasattr(analysis, "usage") and analysis.usage:
