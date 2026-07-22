@@ -18,6 +18,7 @@ Usage:
   python cua/element_manager.py add <name>              # Add element (mouse position)
   python cua/element_manager.py edit <name>             # Re-capture element
   python cua/element_manager.py rename <name>           # Rename element label
+  python cua/element_manager.py reimage <name>          # Replace element image
   python cua/element_manager.py delete <name>           # Delete element
   python cua/element_manager.py preview [name]          # Open element image (name optional)
   python cua/element_manager.py test <name>             # Test match element on screen
@@ -93,8 +94,6 @@ def cmd_show(name: str):
         return
     print(f"Template ID:  {el.get('template_id', '?')}")
     print(f"OCR Text:     {el.get('ocr_text', '(none)')}")
-    print(f"Tool:         {el.get('tool', '?')}")
-    print(f"Args:         {json.dumps(el.get('args', {}), ensure_ascii=False)}")
     print(f"dHash:        {el.get('dhash', '?')}")
     roi = el.get("roi", {})
     print(f"ROI:          ({roi.get('x',0)}, {roi.get('y',0)} "
@@ -226,6 +225,50 @@ def cmd_edit(name: str):
             except: pass
     # Re-add
     cmd_add(name)
+
+
+def cmd_reimage(name: str):
+    """Replace an element's template image with a custom PNG file."""
+    el = _find_by_name(name)
+    if not el:
+        print(f"Element not found: {name}")
+        return
+    old_img = el.get("image_path", "")
+    new_img = input(f"Path to new PNG (current: {old_img}): ").strip()
+    if not new_img or not os.path.exists(new_img):
+        print("File not found.")
+        return
+
+    import cv2, shutil
+    img = cv2.imread(new_img)
+    if img is None:
+        print("Not a valid image file.")
+        return
+
+    # Copy to templates directory
+    dest_dir = Path(old_img).parent if old_img else DATA_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time() * 1000)
+    dest = dest_dir / f"custom_{ts}.png"
+    cv2.imwrite(str(dest), img)
+
+    # Recalculate dHash
+    from cua.recorder import _dhash
+    dh = _dhash(img)
+
+    # Update metadata
+    el["image_path"] = str(dest)
+    el["dhash"] = f"{dh:016x}"
+    el["roi"]["w"] = img.shape[1]
+    el["roi"]["h"] = img.shape[0]
+
+    meta_path = el.get("_file", "")
+    if meta_path and os.path.exists(meta_path):
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(el, f, ensure_ascii=False, indent=2)
+    print(f"  Image replaced: {old_img} → {dest}")
+    print(f"  dHash updated: {el['dhash']}")
+    print(f"  ROI updated: {img.shape[1]}x{img.shape[0]}")
 
 
 def cmd_rename(name: str):
@@ -422,6 +465,7 @@ def main():
         "edit": lambda: cmd_edit(arg) if arg else print("Usage: ... edit <name>"),
         "delete": lambda: cmd_delete(arg) if arg else print("Usage: ... delete <name>"),
         "rename": lambda: cmd_rename(arg) if arg else print("Usage: ... rename <name>"),
+        "reimage": lambda: cmd_reimage(arg) if arg else print("Usage: ... reimage <name>"),
         "test": lambda: cmd_test(arg) if arg else print("Usage: ... test <name>"),
         "search": lambda: cmd_search(arg) if arg else print("Usage: ... search <text>"),
         "export": cmd_export,

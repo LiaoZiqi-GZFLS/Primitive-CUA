@@ -273,12 +273,10 @@ def _crop_button_around_click(
 
     if best_contour is not None:
         bx, by, bw, bh = cv2.boundingRect(best_contour)
-        # Expand slightly for padding
-        pad = 4
-        bx = max(0, bx - pad)
-        by = max(0, by - pad)
-        bw = min(region.shape[1] - bx, bw + pad * 2)
-        bh = min(region.shape[0] - by, bh + pad * 2)
+        # Tight crop (no padding) — keeps background out of template
+        bx, by = max(0, bx), max(0, by)
+        bw = min(region.shape[1] - bx, bw)
+        bh = min(region.shape[0] - by, bh)
         return region[by:by + bh, bx:bx + bw]
 
     # 4. OCR fallback: use text bounding boxes around click
@@ -304,11 +302,9 @@ def _crop_button_around_click(
                     best_box = (ox, oy, ow, oh)
             if best_box and best_dist < max_expand:
                 ox, oy, ow, oh = best_box
-                pad = 4
-                ox = max(0, ox - pad)
-                oy = max(0, oy - pad)
-                ow = min(region.shape[1] - ox, ow + pad * 2)
-                oh = min(region.shape[0] - oy, oh + pad * 2)
+                ox, oy = max(0, ox), max(0, oy)
+                ow = min(region.shape[1] - ox, ow)
+                oh = min(region.shape[0] - oy, oh)
                 return region[oy:oy + oh, ox:ox + ow]
     except Exception:
         pass

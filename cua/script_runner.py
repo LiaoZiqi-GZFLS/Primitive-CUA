@@ -678,18 +678,33 @@ class ScriptEngine:
         from cua.recorder import list_templates, _embed_text
         tmpls = list_templates()
         if not tmpls: return None
-        tv = _embed_text(target_text)
-        best_s, best_t = 0, None
+
+        # Level 0: direct text match (fast, exact or substring)
+        tlower = target_text.lower()
+        best_t = None
         for tm in tmpls:
-            eh = tm.get("embedding_384","")
-            if eh and len(eh) >= 32:
-                try:
-                    b = bytes.fromhex(eh.ljust(768,"0")[:768])
-                    v = np.frombuffer(b, dtype=np.float16)
-                    s = float(np.dot(tv,v) / (np.linalg.norm(tv) * np.linalg.norm(v) + 1e-8))
-                    if s > best_s: best_s, best_t = s, tm
-                except: pass
-        if best_t and best_s > 0.20:
+            ocr = tm.get("ocr_text", "").lower()
+            if tlower == ocr or tlower in ocr or ocr in tlower:
+                best_t = tm
+                break
+
+        # Level 1: embedding fallback (fuzzy, cross-language)
+        if not best_t:
+            tv = _embed_text(target_text)
+            best_s = 0
+            for tm in tmpls:
+                eh = tm.get("embedding_384","")
+                if eh and len(eh) >= 32:
+                    try:
+                        b = bytes.fromhex(eh.ljust(768,"0")[:768])
+                        v = np.frombuffer(b, dtype=np.float16)
+                        s = float(np.dot(tv,v) / (np.linalg.norm(tv) * np.linalg.norm(v) + 1e-8))
+                        if s > best_s: best_s, best_t = s, tm
+                    except: pass
+            if not best_t or best_s < 0.12:
+                return None
+
+        if best_t:
             roi = best_t.get("roi", {})
             path = best_t.get("image_path", "")
             win_cls = best_t.get("window", {}).get("class", "")
@@ -720,18 +735,27 @@ class ScriptEngine:
                 import cv2, mss
                 tm_bgr = cv2.imread(path)
                 if tm_bgr is not None:
-                    with mss.MSS() as sct:
-                        img = np.array(sct.grab(sct.monitors[1]))[...,:3]
-                    from cua.fast_replay import _template_match
-                    # Search in screen coordinates
-                    roi_rect = (screen_x - roi.get("w", 40) // 2,
-                                screen_y - roi.get("h", 20) // 2,
-                                max(roi.get("w", 20) * 3, 100),
-                                max(roi.get("h", 10) * 3, 60))
-                    pt, sc = _template_match(img, tm_bgr, roi_rect)
-                    if pt and sc > 0.65:
-                        return pt
-            # Fallback: use original click point directly
+                    try:
+                        with mss.MSS() as sct:
+                            img = np.array(sct.grab(sct.monitors[1]))[...,:3]
+                        from cua.fast_replay import _template_match
+                        # If window found: search full window area (icon may have moved)
+                        if win_ox > -30000 and win_oy > -30000:
+                            win_w = best_t.get("window", {}).get("rect", [0,0,1920,1080])[2]
+                            win_h = best_t.get("window", {}).get("rect", [0,0,1920,1080])[3]
+                            roi_rect = (win_ox, win_oy, min(win_w, 1920), min(win_h, 1080))
+                        else:
+                            # No window: search around last known position
+                            roi_rect = (screen_x - max(roi.get("w",20)*5, 200),
+                                        screen_y - max(roi.get("h",10)*5, 200),
+                                        max(roi.get("w",20)*11, 500),
+                                        max(roi.get("h",10)*11, 500))
+                        pt, sc = _template_match(img, tm_bgr, roi_rect)
+                        if pt and sc > 0.65:
+                            return pt
+                    except Exception:
+                        pass  # Screenshot failed — fall through to click_px
+            # Fallback: use best available coordinates
             return (screen_x, screen_y)
         return None
 

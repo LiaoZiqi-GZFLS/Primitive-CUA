@@ -431,7 +431,7 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
     model = config.get("model", "kimi-k3")
     base_url = config.get("base_url", "https://api.moonshot.cn/v1")
     max_tokens = config.get("max_completion_tokens") or config.get("max_tokens", 131072)
-    reasoning_effort = config.get("reasoning_effort", "low")
+    reasoning_effort = config.get("reasoning_effort", "high")
     max_iterations = config.get("max_iterations", 50)
 
     # Create OpenAI-compatible client

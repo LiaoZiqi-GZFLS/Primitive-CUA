@@ -34,6 +34,7 @@ def main():
     print("=" * 60)
     print("CUA - Computer Use Agent")
     print(f"  LLM: {model}")
+    print("  Modes: --record (capture)  --replay (fast)  --script (run .cua)")
     print("  Press Ctrl+C during a task to cancel it.")
     print("  Type a task to begin, or 'quit' to exit.")
     print("=" * 60)
@@ -116,16 +117,57 @@ def _run_script(task: str, config: dict, client, model: str):
 
 
 def _run_replay(task: str, config: dict):
-    """Run a task in fast replay mode using recorded templates or macro."""
+    """Run a task in fast replay mode. Priority: script > macro > template."""
     from cua.fast_replay import replay_task, replay_macro
-    from cua.recorder import load_macro
+    from cua.recorder import load_macro, _embed_text
+    from cua.script_runner import ScriptEngine
+
     try:
-        # Check if task is a macro name
+        # 1. Search .cua scripts by embedding similarity
+        import numpy as np
+        from pathlib import Path
+        script_dir = Path("cua/data/scripts")
+        if script_dir.exists():
+            scripts = list(script_dir.glob("*.cua"))
+            task_vec = _embed_text(task[:200])
+            best_s, best_script = 0, None
+            for sc in scripts:
+                # Use first comment line as description, or filename
+                try:
+                    first = sc.read_text(encoding="utf-8").split("\n")[0]
+                    desc = first.lstrip("# ").strip()[:100] or sc.stem
+                except Exception:
+                    desc = sc.stem
+                sv = _embed_text(desc[:200])
+                s = float(np.dot(task_vec, sv) /
+                         (np.linalg.norm(task_vec) * np.linalg.norm(sv) + 1e-8))
+                if s > best_s:
+                    best_s, best_script = s, sc
+
+            if best_script and best_s > 0.15:
+                print(f"  📜 Script match: {best_script.name} (sim={best_s:.3f})\n")
+                engine = ScriptEngine(config)
+                result = engine.run(str(best_script))
+                if result.code == 2:
+                    print(f"↪ Script returned 2 — delegating to K3 Agent")
+                    report = run_task(result.summary, config)
+                else:
+                    report = {
+                        "success": result.code == 0,
+                        "summary": result.summary,
+                        "steps": [f"Script: {result.success_count}/{result.step_count} steps"],
+                        "tokens": {"total": 0},
+                    }
+                _print_report(report)
+                return
+
+        # 2. Search macros
         macro = load_macro(task)
         if macro:
             print(f"  📋 Found macro: {macro['name']} ({len(macro['steps'])} steps)\n")
             report = replay_macro(task, config)
         else:
+            # 3. Template-based replay
             report = replay_task(task, config)
         _print_report(report)
     except KeyboardInterrupt:

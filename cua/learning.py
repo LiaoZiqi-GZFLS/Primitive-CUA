@@ -64,17 +64,28 @@ def _get_embedding_function():
              _time.time() - _cached_embed_at > 300)
 
     # Try multilingual (first time or retry after 300s)
+    # Uses sentence_transformers directly — loads from local cache, no network
     if _cached_embed_fn is None or retry:
         try:
-            ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="paraphrase-multilingual-MiniLM-L12-v2"
+            from sentence_transformers import SentenceTransformer
+            import os as _os
+            _prev = _os.environ.get("TRANSFORMERS_OFFLINE", "")
+            _os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            st = SentenceTransformer(
+                "paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
             )
-            _ = ef(["test"])
-            _cached_embed_fn = ef
+            if _prev:
+                _os.environ["TRANSFORMERS_OFFLINE"] = _prev
+            else:
+                del _os.environ["TRANSFORMERS_OFFLINE"]
+            def _encode(texts):
+                return st.encode(texts, show_progress_bar=False).tolist()
+            _ = _encode(["test"])
+            _cached_embed_fn = _encode
             _cached_embed_type = "multilingual"
             _cached_embed_at = _time.time()
-            print("  [embed] multilingual MiniLM-L12 (zh+en)")
-            return ef
+            print("  [embed] multilingual MiniLM-L12 (zh+en, local)")
+            return _encode
         except Exception:
             pass
 

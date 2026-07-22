@@ -59,7 +59,8 @@ python cua/cli.py --script script.cua           # Execute .cua script
 
 --script: Execute .cua DSL scripts with actions, variables,
           branches, loops, and perception (kimi/ocr/see/window).
-          return 2 delegates to K3 agent.
+          return 0=success, 1=failure, 2=delegate to K3 agent.
+          Scripts can be validated without execution via --check.
 ```
 
 ## Tool Categories

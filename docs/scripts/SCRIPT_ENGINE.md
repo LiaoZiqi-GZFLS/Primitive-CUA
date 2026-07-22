@@ -13,6 +13,35 @@
 
 脚本引擎是文本 DSL 解释器。脚本文件 (.cua) 包含动作、变量、条件分支和循环，由 `ScriptEngine` 逐行解释执行。不依赖 LLM（除 `if kimi` / `while kimi` 条件）。
 
+### 如何执行
+
+```bash
+# 方式1：通过主CLI（推荐，return 2 自动委托K3）
+python cua/cli.py --script cua/data/scripts/launch_wechat.cua
+
+# 方式2：独立脚本引擎（return 2 仅打印并退出）
+python cua/script_runner.py cua/data/scripts/launch_wechat.cua
+
+# 只验证语法，不执行
+python cua/script_runner.py script.cua --check
+
+# 单步确认执行
+python cua/script_runner.py script.cua --step
+```
+
+**两种执行方式的区别**：`cli.py --script` 在脚本 `return 2` 时会自动调用 K3 Agent 接管任务；独立 `script_runner.py` 不知道 API 配置，只能打印退出。
+
+### 与快速回放的关系
+
+脚本引擎和快速回放共享元件库，但执行方式不同：
+
+```
+--script  → 逐行解释 .cua 文本，有分支/循环/变量/return码
+--replay  → L0/L1/L2 模板匹配，执行宏JSON线性步骤序列
+```
+
+录制宏时会自动导出同名 `.cua` 脚本（`cua/data/scripts/`），可手动编辑加入判断逻辑后通过 `--script` 执行。
+
 ---
 
 ## 运行机制
