@@ -277,24 +277,63 @@ def cmd_test(name: str):
         print("Corrupt template image.")
         return
 
-    with mss.MSS() as sct:
-        img = np.array(sct.grab(sct.monitors[1]))[..., :3]
-
+    # Try window binding first for accurate ROI
     roi = el.get("roi", {})
-    roi_rect = (roi.get("x", 0), roi.get("y", 0),
-                max(roi.get("w", 20), 20), max(roi.get("h", 10), 10))
+    win_cls = el.get("window", {}).get("class", "")
+    click_px = el.get("click_px", [0, 0])
+    cx, cy = click_px[0], click_px[1]
+    roi_w = max(roi.get("w", 20), 20)
+    roi_h = max(roi.get("h", 10), 10)
+    win_offset = [0, 0]
+    try:
+        import win32gui
+        def _find(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd): return
+            try:
+                if win_cls.lower() in win32gui.GetClassName(hwnd).lower():
+                    r = win32gui.GetWindowRect(hwnd)
+                    win_offset[0], win_offset[1] = r[0], r[1]
+            except: pass
+        win32gui.EnumWindows(_find, None)
+    except: pass
+    win_ox, win_oy = win_offset[0], win_offset[1]
+
+    with mss.MSS() as sct:
+        monitor = sct.monitors[1]
+        if win_ox > -30000 and win_oy > -30000:
+            for mon in sct.monitors[1:]:
+                if (mon["left"] <= win_ox < mon["left"] + mon["width"] and
+                    mon["top"] <= win_oy < mon["top"] + mon["height"]):
+                    monitor = mon; break
+        else:
+            # Window not found — fall back to click point
+            for mon in sct.monitors[1:]:
+                if (mon["left"] <= cx < mon["left"] + mon["width"] and
+                    mon["top"] <= cy < mon["top"] + mon["height"]):
+                    monitor = mon; break
+            win_ox, win_oy = cx - roi_w, cy - roi_h
+        mon_left, mon_top = monitor["left"], monitor["top"]
+        img = np.array(sct.grab(monitor))[..., :3]
+
+    # ROI in monitor-local coordinates
+    roi_rect = (roi.get("x", 0) + win_ox - mon_left,
+                roi.get("y", 0) + win_oy - mon_top,
+                max(roi_w * 2, 80), max(roi_h * 2, 40))
     pt, score = _template_match(img, tmpl_bgr, roi_rect)
 
-    print(f"Element: {el.get('ocr_text', name)}")
-    print(f"ROI:     ({roi_rect[0]}, {roi_rect[1]} {roi_rect[2]}x{roi_rect[3]})")
+    print(f"Element:   {el.get('ocr_text', name)}")
+    print(f"Window at: ({win_ox}, {win_oy}) {'OK' if win_ox > -30000 else '(fallback to click)'}")
+    print(f"ROI:       ({roi_rect[0]}, {roi_rect[1]} {roi_rect[2]}x{roi_rect[3]})")
     if pt is not None:
-        print(f"Match:   ✓ score={score:.3f} position=({pt[0]},{pt[1]})")
+        print(f"Match:   score={score:.3f} position=({pt[0]},{pt[1]})")
         expected = el.get("ocr_text", "")
-        if expected:
+        if expected and score < 0.85:
             ok = _verify_ocr_text(img, pt, expected)
-            print(f"OCR:     {'✓ matches' if ok else '✗ mismatch'} '{expected[:40]}'")
+            print(f"OCR:     {'matches' if ok else 'mismatch'} '{expected[:40]}'")
+        else:
+            print(f"OCR:     {'skipped (high confidence)' if score >= 0.85 else 'skipped (no text)'}")
     else:
-        print(f"Match:   ✗ best_score={score:.3f} (threshold=0.70)")
+        print(f"Match:   best_score={score:.3f} (threshold=0.70)")
 
 
 def cmd_search(text: str):

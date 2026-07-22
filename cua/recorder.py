@@ -96,15 +96,10 @@ def _dhash_distance(a: int, b: int) -> int:
 
 # --- Embedding (reuses multilingual MiniLM) ---
 
-_embed_fn = None
-
-
 def _get_embed_fn():
-    global _embed_fn
-    if _embed_fn is None:
-        from cua.learning import _get_embedding_function
-        _embed_fn = _get_embedding_function()
-    return _embed_fn
+    """Get shared embedding function (delegates to learning.py cache)."""
+    from cua.learning import _get_embedding_function
+    return _get_embedding_function()
 
 
 def _embed_text(text: str) -> np.ndarray:

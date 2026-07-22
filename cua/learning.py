@@ -29,31 +29,68 @@ _knowledge_collection = None
 _SIMILARITY_THRESHOLD = 0.65  # multilingual model — tuned from tests
 
 
+_cached_embed_fn = None
+_cached_embed_type = ""     # "multilingual" or "onnx"
+_cached_embed_at = 0.0       # last cache time
+
+
+def _try_upgrade_embedding():
+    """Force reload embedding — call after VPN connects."""
+    global _cached_embed_fn, _cached_embed_type, _cached_embed_at
+    _cached_embed_fn = None
+    _cached_embed_type = ""
+    _cached_embed_at = 0.0
+    return _get_embedding_function()
+
+
 def _get_embedding_function():
-    """Get the shared embedding function.
+    """Get the shared embedding function (cached globally).
 
     Prefers multilingual (Chinese+English, 384-dim). Falls back to local
-    ONNX English-only if unavailable.
+    ONNX English-only. If ONNX was loaded due to network failure, retries
+    multilingual on next call.
     """
+    global _cached_embed_fn, _cached_embed_type, _cached_embed_at
+    import time as _time
+
     from chromadb.utils import embedding_functions
 
-    # Multilingual: Chinese+English, requires HuggingFace
-    try:
-        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="paraphrase-multilingual-MiniLM-L12-v2"
-        )
-        _ = ef(["test"])  # verify
-        print("  [embed] multilingual MiniLM-L12 (zh+en)")
-        return ef
-    except Exception:
-        pass
+    # Already have multilingual — return immediately
+    if _cached_embed_fn is not None and _cached_embed_type == "multilingual":
+        return _cached_embed_fn
 
-    # Fallback: local ONNX
+    # ONNX cached — retry multilingual every 300s
+    retry = (_cached_embed_type == "onnx" and
+             _time.time() - _cached_embed_at > 300)
+
+    # Try multilingual (first time or retry after 300s)
+    if _cached_embed_fn is None or retry:
+        try:
+            ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="paraphrase-multilingual-MiniLM-L12-v2"
+            )
+            _ = ef(["test"])
+            _cached_embed_fn = ef
+            _cached_embed_type = "multilingual"
+            _cached_embed_at = _time.time()
+            print("  [embed] multilingual MiniLM-L12 (zh+en)")
+            return ef
+        except Exception:
+            pass
+
+    # Return existing ONNX if available
+    if _cached_embed_fn is not None and _cached_embed_type == "onnx":
+        return _cached_embed_fn
+
+    # Fallback: local ONNX (offline, always available)
     try:
         ef = embedding_functions.ONNXMiniLM_L6_V2(
             preferred_providers=["CPUExecutionProvider"]
         )
-        print("  [embed] ONNX MiniLM-L6 (English only, offline)")
+        _cached_embed_fn = ef
+        _cached_embed_type = "onnx"
+        _cached_embed_at = _time.time()
+        print("  [embed] ONNX MiniLM-L6 (English, offline)")
         return ef
     except Exception:
         pass
@@ -61,6 +98,7 @@ def _get_embedding_function():
     print("  [embed] WARNING: no model, embeddings will be zero")
     def _dummy(texts):
         return [[0.0] * 384 for _ in texts]
+    _cached_embed_fn = _dummy
     return _dummy
 
 

@@ -30,6 +30,7 @@ Usage:
 
   # ── Actions ──
   click target_text           # Template-match + click
+  dblclick target_text        # Template-match + double-click
   uia_click control_name      # UIA Invoke
   web_click element_text      # Playwright click
   type text                   # Paste via clipboard
@@ -131,7 +132,7 @@ class ScriptEngine:
     # ── Validation ──────────────────────────────────────────
 
     VALID_COMMANDS = {
-        "click", "uia_click", "web_click", "type", "keys",
+        "click", "dblclick", "uia_click", "web_click", "type", "keys",
         "launch", "wait", "scroll", "navigate", "drag",
         "screenshot", "ocr", "move", "set", "print", "exec",
         "if", "else", "endif", "repeat", "endrepeat",
@@ -141,7 +142,7 @@ class ScriptEngine:
     BLOCK_STARTS = {"if", "repeat", "while"}
     BLOCK_ENDS = {"endif": "if", "endrepeat": "repeat", "endwhile": "while"}
     REQUIRES_ARG = {
-        "click", "uia_click", "web_click", "type", "keys", "launch",
+        "click", "dblclick", "uia_click", "web_click", "type", "keys", "launch",
         "goto", "label", "set", "scroll", "navigate", "wait_until",
         "if", "while", "finish", "return", "wait", "fail",
     }
@@ -517,7 +518,8 @@ class ScriptEngine:
                 return
         self._step_count += 1
         handlers = {
-            "click": self._act_click, "uia_click": self._act_uia_click,
+            "click": self._act_click, "dblclick": self._act_dblclick,
+            "uia_click": self._act_uia_click,
             "web_click": self._act_web_click, "type": self._act_type,
             "keys": self._act_keys, "launch": self._act_launch,
             "wait": self._act_wait, "scroll": self._act_scroll,
@@ -542,7 +544,15 @@ class ScriptEngine:
         if pt:
             import pyautogui; pyautogui.click(pt[0], pt[1]); time.sleep(0.3)
         else:
-            self._click_embedding(t)
+            print(f"  click: element '{t}' not found")
+
+    def _act_dblclick(self, args):
+        t = " ".join(args)
+        pt = self._find_template(t)
+        if pt:
+            import pyautogui; pyautogui.doubleClick(pt[0], pt[1]); time.sleep(0.3)
+        else:
+            print(f"  dblclick: element '{t}' not found")
 
     def _act_uia_click(self, args):
         from cua.tools.uia import execute_uia_click
@@ -680,7 +690,32 @@ class ScriptEngine:
                     if s > best_s: best_s, best_t = s, tm
                 except: pass
         if best_t and best_s > 0.20:
-            roi, path = best_t.get("roi",{}), best_t.get("image_path","")
+            roi = best_t.get("roi", {})
+            path = best_t.get("image_path", "")
+            win_cls = best_t.get("window", {}).get("class", "")
+            click_px = best_t.get("click_px", [0, 0])
+
+            # Find window offset to convert window-relative ROI to screen coords
+            win_offset = [0, 0]
+            try:
+                import win32gui
+                def _find_win(h, _):
+                    if not win32gui.IsWindowVisible(h): return
+                    try:
+                        if win_cls.lower() in win32gui.GetClassName(h).lower():
+                            r = win32gui.GetWindowRect(h)
+                            win_offset[0], win_offset[1] = r[0], r[1]
+                    except: pass
+                win32gui.EnumWindows(_find_win, None)
+            except: pass
+            win_ox, win_oy = win_offset[0], win_offset[1]
+
+            # Prefer window-offset ROI; fall back to original click point
+            if win_ox > -30000 and win_oy > -30000:
+                screen_x, screen_y = roi.get("x", 0) + win_ox, roi.get("y", 0) + win_oy
+            else:
+                screen_x, screen_y = click_px[0], click_px[1]
+
             if path and os.path.exists(path):
                 import cv2, mss
                 tm_bgr = cv2.imread(path)
@@ -688,16 +723,17 @@ class ScriptEngine:
                     with mss.MSS() as sct:
                         img = np.array(sct.grab(sct.monitors[1]))[...,:3]
                     from cua.fast_replay import _template_match
-                    pt, sc = _template_match(img, tm_bgr,
-                        (roi.get("x",0), roi.get("y",0), roi.get("w",40), roi.get("h",40)))
-                    if pt and sc > 0.65: return pt
-            return (roi.get("x",400), roi.get("y",300))
+                    # Search in screen coordinates
+                    roi_rect = (screen_x - roi.get("w", 40) // 2,
+                                screen_y - roi.get("h", 20) // 2,
+                                max(roi.get("w", 20) * 3, 100),
+                                max(roi.get("h", 10) * 3, 60))
+                    pt, sc = _template_match(img, tm_bgr, roi_rect)
+                    if pt and sc > 0.65:
+                        return pt
+            # Fallback: use original click point directly
+            return (screen_x, screen_y)
         return None
-
-    def _click_embedding(self, t):
-        pt = self._find_template(t)
-        if pt:
-            import pyautogui; pyautogui.click(pt[0], pt[1]); time.sleep(0.3)
 
     def _check_template(self, t): return self._find_template(t) is not None
     def _check_ocr(self, t):
