@@ -150,37 +150,48 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
 
 
 def _heal_orphaned_tool_calls(messages: list):
-    """Fix orphaned tool_calls: ensure every assistant tool_calls message
-    has matching tool response messages. Add error responses for any missing ones.
+    """Fix orphaned tool_calls in both directions:
 
-    K3 rejects messages where tool_call_ids have no matching responses in context.
-    Context cleanup/compression can occasionally leave orphaned references.
+    1. Assistant messages with tool_calls but no matching tool response
+       → inject error responses (K3 requires responses for all tool_calls).
+
+    2. Tool responses without matching assistant tool_calls
+       → remove them (K3 rejects orphaned tool messages).
+
+    Context cleanup/compression can leave both types of orphans.
     """
-    # Collect all tool response IDs
+    # Collect all tool_call_ids from assistant messages
+    called_ids: set[str] = set()
+    for msg in messages:
+        if msg["role"] == "assistant":
+            for tc in msg.get("tool_calls", []):
+                if tc.get("id"):
+                    called_ids.add(tc["id"])
+
+    # Collect all responded IDs from tool messages
     responded_ids: set[str] = set()
     for msg in messages:
         if msg["role"] == "tool":
             responded_ids.add(msg.get("tool_call_id", ""))
 
-    # Find orphaned tool_calls and inject error responses
     fixed = 0
+
+    # Direction 1: assistant has tool_calls but no tool response → inject
     for i, msg in enumerate(messages):
         if msg["role"] != "assistant":
             continue
         tcs = msg.get("tool_calls", [])
         if not tcs:
             continue
-
         orphaned = [
             tc for tc in tcs
             if tc.get("id") and tc["id"] not in responded_ids
         ]
         if not orphaned:
             continue
-
-        # Inject tool error responses right after this assistant message
         for tc in orphaned:
             name = tc.get("function", {}).get("name", "unknown")
+            # Insert after this assistant message
             messages.insert(i + 1, {
                 "role": "tool",
                 "tool_call_id": tc["id"],
@@ -189,8 +200,19 @@ def _heal_orphaned_tool_calls(messages: list):
             })
             fixed += 1
 
+    # Direction 2: tool response without matching assistant tool_calls → remove
+    to_remove = []
+    for i, msg in enumerate(messages):
+        if msg["role"] == "tool":
+            tid = msg.get("tool_call_id", "")
+            if tid and tid not in called_ids:
+                to_remove.append(i)
+    for i in reversed(to_remove):
+        messages.pop(i)
+        fixed += 1
+
     if fixed:
-        print(f"  [heal] fixed {fixed} orphaned tool response(s) in context")
+        print(f"  [heal] fixed {fixed} orphaned reference(s) in context")
 
 
 def _cleanup_context(messages: list):
