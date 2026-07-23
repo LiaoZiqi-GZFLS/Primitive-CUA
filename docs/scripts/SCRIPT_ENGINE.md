@@ -94,6 +94,8 @@ python cua/script_runner.py script.cua --step
 | `$draft_result`  | 最近一次`draft` 生成的文本        | `"尊敬的客户..."`      |
 | `$genimg_result` | 最近一次`genimg` 的结果路径       | `"output/xxx.png"`     |
 | `$kimi_result`   | 最近一次`kimi` 的 K3 摘要         | `"搜索完成，找到3条"`   |
+| `$web_content`   | 最近一次`web_content` 的页面结构  | `"标题: Login\n按钮: Submit..."` |
+| `$web_tabs`      | 最近一次`web_tabs` 的标签列表     | `"[0] Google [1] GitHub"` |
 | `$last_result`   | 最近一次命令的输出                  | 任意命令的输出           |
 | `$now`           | 当前时间戳 (ms)                     | `1700000000000`        |
 
@@ -132,6 +134,24 @@ ask [prompt]              暂停请求人工帮助，回复 → $ask_result
 draft [task] [persona]    DraftContent 子代理写文章 → $draft_result
 genimg [requirement]      GenerateImage 子代理生成图 → $genimg_result
 kimi [subtask] [steps=8]  K3 Agent 接管子任务（最多 N 步） → $kimi_result
+```
+
+#### 网页类
+
+```
+navigate [url]            打开 URL（Playwright 内置浏览器）
+web_click [text]          按可见文本点击元素
+web_type [label] [text]   在输入框输入文字（按 label/placeholder 匹配）
+web_press [key]           按键盘按键（Enter, Escape, Tab...）
+web_scroll [amount]       滚动页面（正值=下滚，负值=上滚，默认 500）
+web_content               读取页面结构（标题/按钮/链接/文字） → $web_content
+web_new_tab [url]         打开新标签页，可选导航到 URL
+web_switch_tab [index]    切换到指定标签（0-based）
+web_close_tab             关闭当前标签
+web_tabs                  列出所有标签 → $web_tabs
+web_refresh               刷新页面
+web_back                  后退
+web_forward               前进
 ```
 
 #### 变量
@@ -175,6 +195,7 @@ return [code] [summary]   退出脚本（code: 0/1/2）
 | `ocr`    | `if ocr text`          | 屏幕 OCR 文字匹配   | 否     |
 | `window` | `if window title_part` | 枚举所有可见窗口    | 否     |
 | `url`    | `if url url_part`      | 浏览器当前 URL      | 否     |
+| `web`    | `if web text`          | 网页内容文字匹配      | 否     |
 
 ### 块语法规则
 
@@ -428,6 +449,66 @@ type "E:\report\status.docx"
 keys enter
 
 return 0 report generated and saved
+```
+
+---
+
+## 网页自动化
+
+脚本引擎内置 Playwright 浏览器，可直接操作网页。
+
+### 表单填写
+
+```cua
+navigate https://example.com/login
+wait 2
+web_content
+
+if web "Username"
+    web_type username "myuser"
+    web_type password "secret123"
+    web_click Login
+    wait 2
+    if url "dashboard"
+        return 0 logged in
+    endif
+endif
+
+return 1 login failed
+```
+
+### 多标签操作
+
+```cua
+navigate https://google.com
+wait 1
+web_type q "CUA computer use agent"
+web_press Enter
+wait 2
+
+# 在新标签打开第一个结果
+web_new_tab
+web_switch_tab 1
+navigate https://github.com
+
+# 回到搜索结果
+web_switch_tab 0
+web_content
+
+return 0 search completed
+```
+
+### 网页内容抓取
+
+```cua
+navigate https://news.ycombinator.com
+wait 2
+web_content
+
+if web "Show HN"
+    file_write news.txt "$web_content"
+    return 0 content saved
+endif
 ```
 
 ---

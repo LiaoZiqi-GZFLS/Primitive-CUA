@@ -50,12 +50,28 @@ Usage:
   genimg requirement          # Subagent GenerateImage, output → $genimg_result
   kimi subtask [steps=N]      # K3 Agent takes over for subtask → $kimi_result
 
+  # ── Web ──
+  navigate url                # Open URL in built-in browser
+  web_click text              # Click element by visible text
+  web_type label text         # Type into input field (match by label/placeholder)
+  web_press key               # Press key on page (Enter, Escape, Tab...)
+  web_scroll amount           # Scroll page (positive=down, negative=up)
+  web_content                 # Read page structure → $web_content
+  web_new_tab [url]           # Open new browser tab
+  web_switch_tab index        # Switch to tab by index
+  web_close_tab               # Close current tab
+  web_tabs                    # List all tabs → $web_tabs
+  web_refresh                 # Refresh current page
+  web_back                    # Go back in history
+  web_forward                 # Go forward in history
+
   # ── Control flow ──
   if kimi question            # K3 vision: yes/no
   if see target               # Element visible via template match?
   if ocr text                 # Text on screen?
   if window title_part        # Window with title open?
   if url url_part             # Current browser URL contains?
+  if web text                 # Text visible in web page content?
   if not see target           # Negation — element NOT visible
     ...               (indent 4 spaces for body)
   else
@@ -89,6 +105,7 @@ Usage:
 
   # ── Built-in variables ──
   $screen_w / $screen_h   $ocr_result   $shell_result
+  $web_content   $web_tabs
   $ask_result   $draft_result   $genimg_result   $kimi_result
   $last_result   $now
 """
@@ -156,6 +173,9 @@ class ScriptEngine:
         "launch", "wait", "sleep", "scroll", "navigate", "drag",
         "screenshot", "ocr", "move", "set", "print", "input", "exec",
         "shell", "ask", "draft", "genimg", "kimi",
+        "web_type", "web_press", "web_scroll", "web_content",
+        "web_new_tab", "web_switch_tab", "web_close_tab", "web_tabs",
+        "web_refresh", "web_back", "web_forward",
         "if", "else", "endif", "repeat", "endrepeat",
         "while", "endwhile", "retry", "endretry",
         "try", "catch", "endtry", "goto", "label",
@@ -169,6 +189,7 @@ class ScriptEngine:
         "goto", "label", "set", "scroll", "navigate", "wait_until",
         "if", "while", "finish", "return", "wait", "sleep", "fail",
         "retry", "input", "shell", "ask", "draft", "genimg", "kimi",
+        "web_type", "web_press", "web_scroll", "web_switch_tab",
     }
 
     def validate(self, script_path: str) -> list[str]:
@@ -307,6 +328,8 @@ class ScriptEngine:
             "draft_result": "",
             "genimg_result": "",
             "kimi_result": "",
+            "web_content": "",
+            "web_tabs": "",
             "last_result": "",
         }
         # Labels are registered during _parse() — don't clear them
@@ -496,7 +519,7 @@ class ScriptEngine:
         prompt = " ".join(orig[1:])
         checks = {"kimi": self._ask_kimi, "see": self._check_template,
                   "ocr": self._check_ocr, "window": self._check_window,
-                  "url": self._check_url}
+                  "url": self._check_url, "web": self._check_web}
         result = checks.get(cond, lambda _: False)(prompt)
         if negate:
             result = not result
@@ -666,6 +689,17 @@ class ScriptEngine:
             "shell": self._act_shell, "ask": self._act_ask,
             "draft": self._act_draft, "genimg": self._act_genimg,
             "kimi": self._act_kimi,
+            "web_type": self._act_web_type,
+            "web_press": self._act_web_press,
+            "web_scroll": self._act_web_scroll,
+            "web_content": self._act_web_content,
+            "web_new_tab": self._act_web_new_tab,
+            "web_switch_tab": self._act_web_switch_tab,
+            "web_close_tab": self._act_web_close_tab,
+            "web_tabs": self._act_web_tabs,
+            "web_refresh": self._act_web_refresh,
+            "web_back": self._act_web_back,
+            "web_forward": self._act_web_forward,
         }
         h = handlers.get(cmd)
         if h:
@@ -734,6 +768,65 @@ class ScriptEngine:
     def _act_navigate(self, args):
         from cua.tools.web import execute_web_navigate
         execute_web_navigate(" ".join(args)); time.sleep(0.5)
+
+    # ── Web actions ──
+
+    def _act_web_type(self, args):
+        from cua.tools.web import execute_web_type
+        if len(args) < 2:
+            raise RuntimeError("web_type requires label and text")
+        execute_web_type(args[0], " ".join(args[1:])); time.sleep(0.3)
+
+    def _act_web_press(self, args):
+        from cua.tools.web import execute_web_press
+        execute_web_press(" ".join(args)); time.sleep(0.2)
+
+    def _act_web_scroll(self, args):
+        from cua.tools.web import execute_web_scroll
+        amount = int(args[0]) if args else 500
+        execute_web_scroll(amount); time.sleep(0.3)
+
+    def _act_web_content(self, args):
+        from cua.tools.web import execute_web_get_content
+        r = execute_web_get_content()
+        text = r["content"][0]["text"]
+        self.vars["web_content"] = text
+        self.vars["last_result"] = text
+        print(f"  [web_content] {len(text)} chars")
+
+    def _act_web_new_tab(self, args):
+        from cua.tools.web import execute_web_new_tab, execute_web_navigate
+        execute_web_new_tab(); time.sleep(0.3)
+        if args:
+            execute_web_navigate(" ".join(args)); time.sleep(0.5)
+
+    def _act_web_switch_tab(self, args):
+        from cua.tools.web import execute_web_switch_tab
+        idx = int(args[0]) if args else 0
+        execute_web_switch_tab(idx); time.sleep(0.3)
+
+    def _act_web_close_tab(self, args):
+        from cua.tools.web import execute_web_close_tab
+        execute_web_close_tab(); time.sleep(0.2)
+
+    def _act_web_tabs(self, args):
+        from cua.tools.web import execute_web_list_tabs
+        r = execute_web_list_tabs()
+        text = r["content"][0]["text"]
+        self.vars["web_tabs"] = text
+        self.vars["last_result"] = text
+
+    def _act_web_refresh(self, args):
+        from cua.tools.web import execute_web_refresh
+        execute_web_refresh(); time.sleep(0.5)
+
+    def _act_web_back(self, args):
+        from cua.tools.web import execute_web_back
+        execute_web_back(); time.sleep(0.3)
+
+    def _act_web_forward(self, args):
+        from cua.tools.web import execute_web_forward
+        execute_web_forward(); time.sleep(0.3)
 
     def _act_drag(self, args):
         """Drag from one element to another, or from element in a direction.
@@ -1108,6 +1201,16 @@ class ScriptEngine:
                     if t.lower() in win32gui.GetWindowText(h).lower(): r[0]=True
                 except: pass
         win32gui.EnumWindows(_e,None); return r[0]
+    def _check_web(self, t):
+        try:
+            # Reuse cached content if available; only re-read if cache is stale
+            if not self.vars.get("web_content"):
+                from cua.tools.web import execute_web_get_content
+                r = execute_web_get_content()
+                self.vars["web_content"] = r["content"][0]["text"]
+            return t.lower() in self.vars["web_content"].lower()
+        except: return False
+
     def _check_url(self, t):
         try:
             from cua.tools.web import _get_page

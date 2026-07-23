@@ -588,6 +588,21 @@ CUA_SCRIPT_SYNTAX = """
   genimg <requirement>         # Subagent GenerateImage → $genimg_result
   kimi <subtask> [steps=N]    # K3 Agent takes over (up to N steps) → $kimi_result
 
+### Web Browser
+  navigate <url>              # Open URL in built-in Playwright browser
+  web_click <text>            # Click element by visible text
+  web_type <label> <text>     # Type into input field (match by label/placeholder)
+  web_press <key>             # Press key on page (Enter, Escape, Tab, etc.)
+  web_scroll <amount>         # Scroll page (positive=down, negative=up, default 500)
+  web_content                 # Read page structure (headings, buttons, text) → $web_content
+  web_new_tab [url]           # Open new tab, optionally navigate to URL
+  web_switch_tab <index>      # Switch to tab by index (0-based)
+  web_close_tab               # Close current tab
+  web_tabs                    # List all tabs → $web_tabs
+  web_refresh                 # Refresh current page
+  web_back                    # Go back in history
+  web_forward                 # Go forward in history
+
 ### Variables
   set <name> <value>          # Set variable: $name = value
   print <text>                # Print to console ($VAR expansion ok)
@@ -599,6 +614,7 @@ CUA_SCRIPT_SYNTAX = """
   if ocr <text>               # Check if text appears on screen
   if window <title>           # Check if window with title is open
   if url <url_part>           # Check if browser URL contains text
+  if web <text>               # Check if text appears in web page content
   if not see <element>        # Negation — element NOT visible
     ...
   else
@@ -659,6 +675,22 @@ CUA_SCRIPT_SYNTAX = """
       kimi "navigate to settings page" steps=5
   endtry
 
+### Web Automation Pattern
+  # Full web form fill workflow:
+  navigate https://example.com/form
+  wait 2
+  web_content                   # Check what's on the page
+  if web "Submit"               # Verify form is loaded
+      web_type name "John Doe"
+      web_type email "john@example.com"
+      web_click Submit
+      wait 1
+      if url "success"
+          return 0 form submitted
+      endif
+  endif
+  return 1 form not found
+
 ### Robustness Pattern (REQUIRED)
   # Every click should be guarded:
   try
@@ -685,6 +717,8 @@ CUA_SCRIPT_SYNTAX = """
   $draft_result              # Output from last draft (subagent)
   $genimg_result             # Output from last genimg (subagent)
   $kimi_result               # Summary from last kimi (K3 subtask)
+  $web_content               # Page structure from last web_content
+  $web_tabs                  # Tab list from last web_tabs
   $last_result               # Output of last action (any type)
   $now                        # Current timestamp (ms)
 """
