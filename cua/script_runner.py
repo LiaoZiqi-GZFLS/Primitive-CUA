@@ -231,6 +231,19 @@ class ScriptEngine:
         for bt, bl_no, bl_cmd in block_stack:
             errors.append(f"  L{bl_no}: unclosed '{bt}' block: {bl_cmd}")
 
+        # Element existence check (warnings, not errors)
+        from cua.recorder import list_templates
+        tmpls = list_templates()
+        known = {t.get("ocr_text", "") for t in tmpls}
+        for li, inst in enumerate(self._parse(raw)):
+            if inst["cmd"] in ("click", "dblclick") and inst["args"]:
+                target = " ".join(inst["args"])
+                # Check if target matches any known element
+                if target not in known and not any(
+                    target in k for k in known
+                ) and not any(k in target for k in known):
+                    errors.append(f"  L{inst['lineno']}: element '{target}' not found in library (WARNING)")
+
         # goto target check
         for li, inst in enumerate(self._parse(raw)):
             if inst["cmd"] == "goto" and inst["args"]:
@@ -682,7 +695,11 @@ class ScriptEngine:
     def _act_keys(self, args):
         import pyautogui
         combo = "".join(args).replace(" ","").split("+")
-        pyautogui.hotkey(*combo); time.sleep(0.2)
+        if len(combo) == 1:
+            pyautogui.press(combo[0])
+        else:
+            pyautogui.hotkey(*combo)
+        time.sleep(0.2)
 
     def _act_launch(self, args):
         import pyperclip, pyautogui
@@ -792,14 +809,19 @@ class ScriptEngine:
         tmpls = list_templates()
         if not tmpls: return None
 
-        # Level 0: direct text match (fast, exact or substring)
+        # Level 0: direct text match — exact first, then longest substring
         tlower = target_text.lower()
-        best_t = None
+        best_t, best_len = None, 0
         for tm in tmpls:
             ocr = tm.get("ocr_text", "").lower()
-            if tlower == ocr or tlower in ocr or ocr in tlower:
-                best_t = tm
-                break
+            if tlower == ocr:
+                best_t = tm; break  # exact match wins immediately
+        if not best_t:
+            for tm in tmpls:
+                ocr = tm.get("ocr_text", "").lower()
+                if tlower in ocr or ocr in tlower:
+                    if len(ocr) > best_len:
+                        best_t, best_len = tm, len(ocr)
 
         # Level 1: embedding fallback (fuzzy, cross-language)
         if not best_t:
@@ -949,14 +971,17 @@ def main():
             print("OK - No errors found.")
             sys.exit(0)
 
-    result = engine.run(path)
-    print(f"\n  Return code: {result.code}")
-    if result.code == 0:
-        print(f"  SUCCESS: {result.summary}")
-    elif result.code == 1:
-        print(f"  FAILED: {result.summary}")
-    else:
-        print(f"  DELEGATE to K3: {result.summary}")
+    try:
+        result = engine.run(path)
+        print(f"\n  Return code: {result.code}")
+        if result.code == 0:
+            print(f"  SUCCESS: {result.summary}")
+        elif result.code == 1:
+            print(f"  FAILED: {result.summary}")
+        else:
+            print(f"  DELEGATE to K3: {result.summary}")
+    except KeyboardInterrupt:
+        print("\n  Interrupted by Ctrl+C — script aborted.")
 
 
 if __name__ == "__main__":

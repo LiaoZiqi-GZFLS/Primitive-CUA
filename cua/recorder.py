@@ -563,6 +563,97 @@ def save_macro(name: str, task: str, steps: list[dict]) -> str | None:
     return str(macro_path)
 
 
+CUA_SCRIPT_SYNTAX = """
+## .cua Script Syntax Reference
+
+### Actions
+  click <element_name>        # Template-match and click
+  dblclick <element_name>     # Template-match and double-click
+  uia_click <control_name>    # UIA Invoke click
+  web_click <text>            # Playwright click by visible text
+  type <text>                 # Paste text via clipboard (Ctrl+V)
+  keys <combo>                # Keyboard shortcut (e.g. ctrl+c, enter)
+  launch <app_name>           # Start menu launch
+  wait <seconds>              # Sleep (seconds, e.g. 1.5)
+  sleep <seconds>             # Alias for wait
+  scroll <up|down> <pixels>   # Mouse scroll
+  navigate <url>              # Browser navigate to URL
+  drag <fx> <fy> <tx> <ty>    # Mouse drag (normalized 0-1 coords)
+  move <x> <y>                # Move mouse (normalized 0-1 coords)
+  screenshot [path]            # Save screenshot to file
+  ocr [path]                  # Run OCR, result in $ocr_result
+
+### Variables
+  set <name> <value>          # Set variable: $name = value
+  print <text>                # Print to console ($VAR expansion ok)
+  input <var> <prompt>        # Read user input into $var
+
+### Control Flow (indent body with 4 spaces)
+  if kimi <question>          # K3 vision: ask yes/no about current screen
+  if see <element>            # Check if element is visible on screen
+  if ocr <text>               # Check if text appears on screen
+  if window <title>           # Check if window with title is open
+  if url <url_part>           # Check if browser URL contains text
+  if not see <element>        # Negation — element NOT visible
+    ...
+  else
+    ...
+  endif
+
+  repeat <N>                  # Repeat body N times
+    ...
+  endrepeat
+
+  retry <N>                   # Retry up to N times, stop on first success
+    ...
+  endretry
+
+  while kimi <question>       # Loop while K3 says yes
+    ...
+  endwhile
+
+  try                         # Catch errors gracefully
+    ...
+  catch
+    ...
+  endtry
+
+  goto <label>                # Unconditional jump
+  label <name>                # Jump target
+  wait_until see <element> [timeout=10]  # Wait for element to appear
+  fail <reason>               # Abort with error (return 1)
+  exec <macro_name>           # Run another macro inline
+
+### Return Codes
+  return 0 <summary>          # Success
+  return 1 <summary>          # Failure
+  return 2 <summary>          # Delegate to K3 Agent
+
+### Robustness Pattern (REQUIRED)
+  # Every click should be guarded:
+  try
+      click <element>
+  catch
+      return 2 element not found — need K3 to handle
+  endtry
+
+  # Launch + wait for UI:
+  launch <app>
+  wait 3
+  wait_until see <element> timeout 10
+
+  # Retry flaky actions:
+  retry 3
+      click <element>
+  endretry
+
+### Built-in Variables
+  $screen_w, $screen_h        # Screen resolution in pixels
+  $ocr_result                 # Output of last ocr command
+  $now                        # Current timestamp (ms)
+"""
+
+
 def _improve_script(macro: dict, safe_name: str, task: str):
     """Ask K3 to review the recorded steps and add guards to the auto-generated script.
 
@@ -601,23 +692,27 @@ def _improve_script(macro: dict, safe_name: str, task: str):
             model=model,
             messages=[
                 {"role": "system", "content": (
-                    "You improve desktop automation scripts. Given a recorded task trace, "
-                    "add robustness guards. Output ONLY the complete improved .cua script."
+                    "You are a CUA script optimizer. Follow the syntax reference exactly. "
+                    "Output ONLY valid .cua code — no explanations, no markdown fences, "
+                    "no comments before the first command. Each line must be a valid "
+                    "command or # comment. Indent with exactly 4 spaces for block bodies. "
+                    "Use element names from the recorded steps — do not invent names."
                 )},
                 {"role": "user", "content": (
                     f"Task: {task}\n\nRecorded steps:\n{steps_text}\n\n"
-                    f"Improve this script by adding:\n"
-                    f"- wait_until see before clicking elements that may need loading time\n"
-                    f"- wait after launch actions (apps take time to open)\n"
-                    f"- if kimi checks for UI states that could vary (popups, login screens)\n"
-                    f"- if ocr checks to confirm key text appears before clicking it\n"
-                    f"- return 2 when something is unpredictable\n"
-                    f"- set variables for any text values that might change\n\n"
-                    f"Keep the original step order. Just add guards and retry logic.\n"
-                    f"Output ONLY the .cua script — no markdown, no explanations."
+                    f"{CUA_SCRIPT_SYNTAX}\n\n"
+                    f"Improve this script by adding robustness. REQUIRED patterns:\n"
+                    f"1. Wrap every click/dblclick in try/catch — if element not found, "
+                    f"   handle gracefully or return 2 to delegate to K3 Agent.\n"
+                    f"2. Use retry N around flaky UI interactions (click, type after launch).\n"
+                    f"3. Use if see / if not see before critical actions to verify state.\n"
+                    f"4. Use if kimi for complex visual checks (popups, login screens).\n"
+                    f"5. Always have a return 2 fallback for unrecoverable situations.\n"
+                    f"6. Use wait_until see after launch/wait to wait for UI to settle.\n"
+                    f"Keep the original step order. Output ONLY valid .cua code — no markdown."
                 )},
             ],
-            max_tokens=1500,
+            reasoning_effort="max",
         )
         improved = (resp.choices[0].message.content or "").strip()
         if improved.startswith("```"):
@@ -626,7 +721,47 @@ def _improve_script(macro: dict, safe_name: str, task: str):
                 improved = improved[:-3]
         improved = improved.strip()
 
-        if len(improved) < 30:
+        # Self-correct: validate and fix up to 3 times
+        script_content = improved
+        for fix_round in range(3):
+            try:
+                from cua.script_runner import ScriptEngine
+                import tempfile, os as _os2
+                tf = tempfile.NamedTemporaryFile(mode="w", suffix=".cua",
+                                                 delete=False, encoding="utf-8")
+                tf.write(script_content); tf.close()
+                engine = ScriptEngine()
+                errors = engine.validate(tf.name)
+                _os2.unlink(tf.name)
+                if not errors:
+                    break
+                print(f"  [macro] validation round {fix_round+1}: {len(errors)} errors, fixing...")
+                fix_resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": (
+                            "Fix the syntax errors in this .cua script. Output ONLY "
+                            "the corrected complete script — no explanations, no markdown."
+                        )},
+                        {"role": "user", "content": (
+                            f"Script with errors:\n\n{script_content}\n\n"
+                            f"Errors to fix:\n" + "\n".join(errors) +
+                            f"\n\nOutput the corrected script:"
+                        )},
+                    ],
+                    reasoning_effort="max",
+                )
+                fixed = (fix_resp.choices[0].message.content or "").strip()
+                if fixed.startswith("```"):
+                    fixed = fixed.split("\n", 1)[1] if "\n" in fixed else fixed
+                    if fixed.endswith("```"): fixed = fixed[:-3]
+                fixed = fixed.strip()
+                if len(fixed) > 30:
+                    script_content = fixed
+            except Exception:
+                break  # Validation loop is best-effort
+
+        if len(script_content) < 30:
             return
 
         # Overwrite the auto-generated script with the improved version
@@ -634,7 +769,7 @@ def _improve_script(macro: dict, safe_name: str, task: str):
         SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
         script_path = SCRIPT_DIR / f"{safe_name}.cua"
         with open(script_path, "w", encoding="utf-8") as f:
-            f.write(improved)
+            f.write(script_content)
         print(f"  [macro] K3-improved script: {script_path}")
     except Exception:
         pass  # Best-effort, don't block macro save

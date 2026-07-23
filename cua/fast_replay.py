@@ -748,13 +748,9 @@ def _execute_steps(task: str, config: dict, steps: list[dict],
 
 def _self_heal(task: str, steps: list[dict], tool_log: list[str],
                l2_count: int, l1_count: int, config: dict):
-    """Agent reviews replay failures and rewrites the .cua script.
-
-    Takes the macro steps, failure log, and current screenshot. Asks K3
-    to generate an improved script with waits, branches, and fallbacks.
-    Saves the improved .cua alongside the original macro.
-    """
+    """Agent reviews replay failures and rewrites the .cua script."""
     from openai import OpenAI
+    from cua.recorder import CUA_SCRIPT_SYNTAX
     import mss, cv2
 
     api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
@@ -783,16 +779,14 @@ def _self_heal(task: str, steps: list[dict], tool_log: list[str],
         f"Recorded steps:\n{steps_text}\n"
         f"Failures during replay:\n{failure_text}\n"
         f"L2 (K3 agent) fallbacks: {l2_count}, L1 (embedding) fallbacks: {l1_count}\n\n"
-        f"You are an automation script optimizer. Look at the screenshot. "
-        f"Diagnose why some steps failed and rewrite the script to be more robust.\n\n"
-        f"Rules:\n"
-        f"- Add wait_until before steps that may need the UI to settle\n"
-        f"- Add if ocr / if see checks before clicking critical elements\n"
-        f"- Add if kimi branches for multi-state UI (e.g. login popup vs main screen)\n"
-        f"- Use variables for dynamic text ($target, $message)\n"
-        f"- Keep the original step order, only add guards and retries\n"
-        f"- Use return 2 when the situation is beyond what a script can handle\n\n"
-        f"Output ONLY the complete .cua script. No explanations, no markdown fences."
+        f"{CUA_SCRIPT_SYNTAX}\n\n"
+        f"Look at the screenshot. Diagnose failures and rewrite the script. "
+        f"REQUIRED patterns:\n"
+        f"1. Wrap click/dblclick in try/catch — on failure, return 2 to K3 Agent.\n"
+        f"2. retry N on flaky steps. if see before critical clicks.\n"
+        f"3. Always have a return 2 fallback for unrecoverable situations.\n"
+        f"4. wait_until see after launch to wait for UI.\n"
+        f"Keep the original step order. Output ONLY valid .cua code — no markdown."
     )
 
     try:
@@ -800,16 +794,18 @@ def _self_heal(task: str, steps: list[dict], tool_log: list[str],
             model=model,
             messages=[
                 {"role": "system", "content": (
-                    "You are a CUA script optimizer. You analyze failed macro replay "
-                    "logs and rewrite .cua scripts to handle edge cases. Output ONLY "
-                    "the complete improved script — no explanations, no markdown."
+                    "You are a CUA script optimizer. Follow the syntax reference exactly. "
+                    "Output ONLY valid .cua code — no explanations, no markdown fences. "
+                    "Each line must be a valid command or # comment. Use 4-space indent. "
+                    "Use element names from the recorded steps — do not invent names. "
+                    "The script MUST pass 'cua/script_runner.py --check' validation."
                 )},
                 {"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": _np_to_png_b64(scaled)}},
                     {"type": "text", "text": prompt},
                 ]},
             ],
-            max_tokens=2000,
+            reasoning_effort="max",
         )
         improved = (resp.choices[0].message.content or "").strip()
         # Strip markdown fences if present
@@ -823,13 +819,56 @@ def _self_heal(task: str, steps: list[dict], tool_log: list[str],
             print(f"  [heal] K3 returned empty/bad response")
             return
 
+        # Self-correct: validate and fix up to 3 times
+        script_content = improved
+        for fix_round in range(3):
+            try:
+                from cua.script_runner import ScriptEngine
+                import tempfile, os as _os2
+                tf = tempfile.NamedTemporaryFile(mode="w", suffix=".cua",
+                                                 delete=False, encoding="utf-8")
+                tf.write(script_content); tf.close()
+                engine = ScriptEngine()
+                errors = engine.validate(tf.name)
+                _os2.unlink(tf.name)
+                if not errors:
+                    break
+                print(f"  [heal] validation round {fix_round+1}: {len(errors)} errors, fixing...")
+                fix_resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": (
+                            "Fix the syntax errors in this .cua script. Output ONLY "
+                            "the corrected complete script — no explanations, no markdown."
+                        )},
+                        {"role": "user", "content": (
+                            f"Script with errors:\n\n{script_content}\n\n"
+                            f"Errors to fix:\n" + "\n".join(errors) +
+                            f"\n\nOutput the corrected script:"
+                        )},
+                    ],
+                    reasoning_effort="max",
+                )
+                fixed = (fix_resp.choices[0].message.content or "").strip()
+                if fixed.startswith("```"):
+                    fixed = fixed.split("\n", 1)[1] if "\n" in fixed else fixed
+                    if fixed.endswith("```"): fixed = fixed[:-3]
+                fixed = fixed.strip()
+                if len(fixed) > 30:
+                    script_content = fixed
+            except Exception:
+                break
+
+        if len(script_content) < 30:
+            return
+
         # Save improved script
         from cua.recorder import MACRO_DIR
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in task[:40])[:40]
         script_path = MACRO_DIR.parent / "scripts" / f"{safe_name}_improved.cua"
         script_path.parent.mkdir(parents=True, exist_ok=True)
         with open(script_path, "w", encoding="utf-8") as f:
-            f.write(improved)
+            f.write(script_content)
         print(f"  [heal] improved script saved: {script_path}")
         print(f"  [heal] diff with: code --diff {safe_name}.cua {safe_name}_improved.cua")
 

@@ -43,7 +43,8 @@ def _load_all() -> list[dict]:
     results = []
     if not DATA_DIR.exists():
         return results
-    for p in sorted(DATA_DIR.rglob("*.json")):
+    for p in sorted(DATA_DIR.rglob("*.json"),
+                 key=lambda p: (p.parent.name, -p.stat().st_mtime)):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 d = json.load(f)
@@ -117,10 +118,11 @@ def _unique_name(name: str) -> str:
     return f"{name}_{suffix}"
 
 
-def _capture_box() -> tuple | None:
+def _capture_box(box_w: int = 200, box_h: int = 80) -> tuple | None:
     """Show fullscreen overlay with a resizable selection box.
 
-    Default box appears at screen center. Drag edges/corners to resize.
+    Initial box is auto-detected from contour around mouse, falling back
+    to box_w x box_h at cursor. Drag edges/corners to resize.
     Drag inside to move. Enter to confirm, ESC to cancel.
     """
     import tkinter as tk
@@ -132,6 +134,34 @@ def _capture_box() -> tuple | None:
     import PIL.Image, PIL.ImageTk
     pil_img = PIL.Image.fromarray(full[..., ::-1])
 
+    # Auto-detect button contour around mouse
+    import pyautogui
+    mx, my = pyautogui.position()
+    bx, by = mx - box_w // 2, my - box_h // 2
+    bw, bh = box_w, box_h
+
+    # Try contour detection for a tighter initial box
+    try:
+        margin = 120
+        x1 = max(0, mx - margin); y1 = max(0, my - margin)
+        x2 = min(w, mx + margin); y2 = min(h, my + margin)
+        region = full[y1:y2, x1:x2]
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 30, 120)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        local_mx, local_my = mx - x1, my - y1
+        best = None
+        for c in contours:
+            cbx, cby, cbw, cbh = cv2.boundingRect(c)
+            if cbw < 8 or cbh < 6 or cbw * cbh < 60: continue
+            if cbx <= local_mx <= cbx + cbw and cby <= local_my <= cby + cbh:
+                if best is None or cbw * cbh < best[2] * best[3]:
+                    best = (cbx + x1, cby + y1, cbw, cbh)
+        if best:
+            bx, by, bw, bh = best
+    except Exception:
+        pass
+
     root = tk.Tk()
     root.attributes("-fullscreen", True, "-topmost", True)
     root.attributes("-alpha", 0.6)
@@ -139,9 +169,6 @@ def _capture_box() -> tuple | None:
     canvas.pack()
     photo = PIL.ImageTk.PhotoImage(pil_img)
     canvas.create_image(0, 0, anchor="nw", image=photo)
-
-    bx, by = (w - 200) // 2, (h - 100) // 2
-    bw, bh = 200, 100
     result = None
     drag_mode = [None]
     last = [0, 0]
@@ -208,8 +235,11 @@ def _capture_box() -> tuple | None:
     return result
 
 
-def cmd_add(name: str):
-    """Add a new element by dragging a selection box on screen."""
+def cmd_add(name: str, box_w: int = 200, box_h: int = 80):
+    """Add a new element by dragging a selection box on screen.
+
+    Optional: specify box size (e.g. 'add name 300 50' for a wide box).
+    """
     import cv2
     from cua.recorder import (
         _dhash, _embed_text, _get_window_info, _get_window_at_point,
@@ -218,12 +248,12 @@ def cmd_add(name: str):
     import json, re
 
     name = _unique_name(name)
-    print(f"Adding element: {name}")
+    print(f"Adding element: {name} (box {box_w}x{box_h})")
     for i in range(3, 0, -1):
         print(f"  {i}...")
         time.sleep(1)
     print("  Select region now!")
-    result = _capture_box()
+    result = _capture_box(box_w, box_h)
     if result is None:
         print("  Cancelled.")
         return
@@ -248,7 +278,7 @@ def cmd_add(name: str):
         zh = re.findall(r'[一-鿿㐀-䶿]{2,8}', win_title)
         if zh: app_hint = zh[0][:8]
 
-    label = f"{app_hint}-{name}" if app_hint and not name.startswith(app_hint) else name
+    label = name  # Manual add: use exact user-provided name
     cache = _get_name_cache()
     if label in cache:
         label = f"{label}_{dh:04x}"[:80]
@@ -569,7 +599,12 @@ def main():
     commands = {
         "list": lambda: cmd_list(),
         "show": lambda: cmd_show(arg) if arg else print("Usage: ... show <name>"),
-        "add": lambda: cmd_add(arg) if arg else print("Usage: ... add <name>"),
+        "add": lambda: (
+            cmd_add(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+            if len(sys.argv) > 4 else
+            cmd_add(sys.argv[2]) if len(sys.argv) > 2 else
+            print("Usage: ... add <name> [w] [h]")
+        ),
         "preview": lambda: cmd_preview(arg) if arg else cmd_preview(),
         "edit": lambda: cmd_edit(arg) if arg else print("Usage: ... edit <name>"),
         "delete": lambda: cmd_delete(arg) if arg else print("Usage: ... delete <name>"),
