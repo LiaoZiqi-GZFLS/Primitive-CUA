@@ -159,6 +159,10 @@ class ScriptEngine:
         self._lines: list[dict] = []
         self._step_count = 0
         self._success_count = 0
+        self._task = ""           # original task for K3 handoff context
+        self._last_action = ""    # last action description
+        self._completed: list[str] = []  # completed action log
+        self._script_source = ""  # full script source for K3 handoff
 
     def _load_config(self):
         from cua.config import load_config
@@ -260,18 +264,17 @@ class ScriptEngine:
         for bt, bl_no, bl_cmd in block_stack:
             errors.append(f"  L{bl_no}: unclosed '{bt}' block: {bl_cmd}")
 
-        # Element existence check (warnings, not errors)
+        # Element existence check (warnings, don't block execution)
         from cua.recorder import list_templates
         tmpls = list_templates()
         known = {t.get("ocr_text", "") for t in tmpls}
         for li, inst in enumerate(self._parse(raw)):
             if inst["cmd"] in ("click", "dblclick") and inst["args"]:
                 target = " ".join(inst["args"])
-                # Check if target matches any known element
                 if target not in known and not any(
                     target in k for k in known
                 ) and not any(k in target for k in known):
-                    errors.append(f"  L{inst['lineno']}: element '{target}' not found in library (WARNING)")
+                    pass  # Warn during execution, not validation — may self-heal
 
         # goto target check
         for li, inst in enumerate(self._parse(raw)):
@@ -303,6 +306,17 @@ class ScriptEngine:
 
         self._lines = self._parse(raw)
         self._init_vars()
+        self._script_source = raw
+        # Capture original task from first comment line or filename
+        self._task = ""
+        for line in raw.splitlines():
+            s = line.strip()
+            if s.startswith("#"):
+                self._task = s.lstrip("# ").strip()[:200]
+                break
+        if not self._task:
+            self._task = path.stem
+        self._completed = []
         print(f"  [script] {path.name} ({len(self._lines)} commands) valid")
 
         return self._execute()
@@ -311,6 +325,14 @@ class ScriptEngine:
         """Execute a script from a string (for testing or inline use)."""
         self._lines = self._parse(source)
         self._init_vars()
+        self._script_source = source
+        self._task = ""
+        for line in source.splitlines():
+            s = line.strip()
+            if s.startswith("#"):
+                self._task = s.lstrip("# ").strip()[:200]
+                break
+        self._completed = []
         print(f"  [script] {name} ({len(self._lines)} commands)")
         return self._execute()
 
@@ -457,10 +479,16 @@ class ScriptEngine:
             elif cmd == "retry":
                 n = int(inst["args"][0]) if inst["args"] else 3
                 print(f"  [retry] {n}x")
-                self._do_retry(ip, n); ip = self._skip_to(ip, "endretry") + 1
+                result = self._do_retry(ip, n)
+                if result is not None:
+                    return result
+                ip = self._skip_to(ip, "endretry") + 1
             elif cmd == "try":
                 print(f"  [try]")
-                self._do_try(ip); ip = self._skip_to(ip, "endtry") + 1
+                result = self._do_try(ip)
+                if result is not None:
+                    return result
+                ip = self._skip_to(ip, "endtry") + 1
             elif cmd == "input":
                 self._do_input(inst); ip += 1
             elif cmd == "goto":
@@ -548,8 +576,37 @@ class ScriptEngine:
             code = int(args[0]) if args else 0
         except ValueError:
             code = 0
-        summary = " ".join(args[1:]) if len(args) > 1 else (
+        reason = " ".join(args[1:]) if len(args) > 1 else (
             "success" if code == 0 else ("failure" if code == 1 else "delegate"))
+
+        if code == 2 and self._task:
+            # Build rich handoff context for K3 Agent
+            recent = self._completed[-5:] if self._completed else []
+            recent_str = "\n".join(f"  {s}" for s in recent) if recent else "(none)"
+
+            # Include script source (truncated) so K3 sees the full plan
+            script_src = self._script_source
+            truncated = False
+            if len(script_src) > 10000:
+                script_src = script_src[:10000]
+                truncated = True
+
+            summary = (
+                f"Script reached a point requiring AI assistance.\n\n"
+                f"Original task: {self._task}\n\n"
+                f"Progress: {self._success_count}/{self._step_count} steps succeeded.\n"
+                f"Last action: {self._last_action or '(none)'}\n"
+                f"Reason for handoff: {reason}\n\n"
+                f"Recent steps:\n{recent_str}\n\n"
+                f"Script source{' (truncated)' if truncated else ''}:\n"
+                f"```cua\n{script_src}\n```\n\n"
+                f"Steps already completed are marked [ok] above. "
+                f"Pick up from the failed step and complete the remaining task. "
+                f"Use the script as a guide — you have tools the script doesn't."
+            )
+        else:
+            summary = reason
+
         return ScriptResult(code, summary,
                             step_count=self._step_count,
                             success_count=self._success_count)
@@ -605,6 +662,10 @@ class ScriptEngine:
                 inst = self._lines[body_ip]
                 if inst["cmd"] in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
                     body_ip += 1; continue
+                if inst["cmd"] == "return":
+                    return self._do_return(inst)
+                if inst["cmd"] in ("finish", "fail"):
+                    return self._do_return(inst) if inst["cmd"] == "finish" else self._do_fail(inst)
                 self._do_action(inst)
                 body_ip += 1
             # If body succeeded (success count increased), stop
@@ -629,14 +690,24 @@ class ScriptEngine:
         except Exception as e:
             print(f"  [try] caught: {e}")
             self._in_try = False
-            # Execute catch block
+            self._last_action = f"try/catch: {e}"
+            self._completed.append(f"[FAIL] try block: {e}")
+            # Execute catch block — respect return/fail commands
             body_ip = catch_ip + 1
             while body_ip < end_ip:
                 inst = self._lines[body_ip]
-                if inst["cmd"] in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
+                cmd = inst["cmd"]
+                if cmd in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
                     body_ip += 1; continue
-                if inst["cmd"] not in self.VALID_COMMANDS:
+                if cmd not in self.VALID_COMMANDS:
                     body_ip += 1; continue
+                # Handle return/fail in catch block
+                if cmd == "return":
+                    return self._do_return(inst)
+                if cmd == "finish":
+                    return self._do_return(inst)
+                if cmd == "fail":
+                    return self._do_fail(inst)
                 try: self._do_action(inst)
                 except: pass
                 body_ip += 1
@@ -700,14 +771,23 @@ class ScriptEngine:
             "web_refresh": self._act_web_refresh,
             "web_back": self._act_web_back,
             "web_forward": self._act_web_forward,
+            "return": lambda a: None,  # handled via _do_return at _execute level
+            "finish": lambda a: None,  # alias
+            "fail": lambda a: None,
         }
         h = handlers.get(cmd)
         if h:
+            action_desc = f"{cmd} {' '.join(args)[:60]}"
+            self._last_action = action_desc
             try:
+                # Allow handlers to return ScriptResult (e.g., return/finish/fail)
                 h(args)
                 self._success_count += 1
-                print(f"  OK {cmd} {' '.join(args)[:60]}")
+                self._completed.append(f"[ok] {action_desc}")
+                print(f"  OK {action_desc}")
             except Exception as e:
+                self._completed.append(f"[FAIL] {action_desc}: {e}")
+                self._last_action = f"{action_desc} → {e}"
                 print(f"  FAIL {cmd}: {e}")
                 if getattr(self, "_in_try", False):
                     raise
@@ -1129,59 +1209,86 @@ class ScriptEngine:
             if not best_t or best_s < 0.12:
                 return None
 
-        if best_t:
-            roi = best_t.get("roi", {})
-            path = best_t.get("image_path", "")
-            win_cls = best_t.get("window", {}).get("class", "")
-            click_px = best_t.get("click_px", [0, 0])
+        if not best_t:
+            return None
 
-            # Find window offset to convert window-relative ROI to screen coords
-            win_offset = [0, 0]
+        roi = best_t.get("roi", {})
+        path = best_t.get("image_path", "")
+        win_cls = best_t.get("window", {}).get("class", "")
+        win_info = best_t.get("window", {})
+
+        if not path or not os.path.exists(path):
+            return None
+
+        import cv2, mss
+        tm_bgr = cv2.imread(path)
+        if tm_bgr is None:
+            return None
+
+        from cua.fast_replay import _template_match
+
+        # Step 1: Find target window on screen
+        win_rect = None  # (x, y, w, h)
+        try:
+            import win32gui
+            def _find_win(h, _):
+                nonlocal win_rect
+                if not win32gui.IsWindowVisible(h):
+                    return
+                try:
+                    if win_cls.lower() in win32gui.GetClassName(h).lower():
+                        r = win32gui.GetWindowRect(h)
+                        win_rect = (r[0], r[1], r[2] - r[0], r[3] - r[1])
+                except Exception:
+                    pass
+            win32gui.EnumWindows(_find_win, None)
+        except Exception:
+            pass
+
+        # Step 2: Match within window region (or full screen fallback)
+        for _retry in range(3):
             try:
-                import win32gui
-                def _find_win(h, _):
-                    if not win32gui.IsWindowVisible(h): return
-                    try:
-                        if win_cls.lower() in win32gui.GetClassName(h).lower():
-                            r = win32gui.GetWindowRect(h)
-                            win_offset[0], win_offset[1] = r[0], r[1]
-                    except: pass
-                win32gui.EnumWindows(_find_win, None)
-            except: pass
-            win_ox, win_oy = win_offset[0], win_offset[1]
+                with mss.MSS() as sct:
+                    img = np.array(sct.grab(sct.monitors[1]))[..., :3]
 
-            # Prefer window-offset ROI; fall back to original click point
-            if win_ox > -30000 and win_oy > -30000:
-                screen_x, screen_y = roi.get("x", 0) + win_ox, roi.get("y", 0) + win_oy
-            else:
-                screen_x, screen_y = click_px[0], click_px[1]
+                if win_rect:
+                    # Crop to window region + small margin
+                    wx, wy, ww, wh = win_rect
+                    margin = 30
+                    x1 = max(0, wx - margin)
+                    y1 = max(0, wy - margin)
+                    x2 = min(img.shape[1], wx + ww + margin)
+                    y2 = min(img.shape[0], wy + wh + margin)
+                    crop = img[y1:y2, x1:x2]
+                    # Match within cropped window
+                    pt_local, sc = _template_match(crop, tm_bgr,
+                                                   (0, 0, crop.shape[1], crop.shape[0]))
+                    if pt_local and sc > 0.65:
+                        return (pt_local[0] + x1, pt_local[1] + y1)
+                    if _retry == 0 and sc < 0.3:
+                        # Window found but element not in it — try full screen
+                        pass
+                else:
+                    print(f"  [find] window '{win_cls}' not on screen, using full-screen fallback")
 
-            if path and os.path.exists(path):
-                import cv2, mss
-                tm_bgr = cv2.imread(path)
-                if tm_bgr is not None:
-                    from cua.fast_replay import _template_match
-                    for _retry in range(3):
-                        try:
-                            with mss.MSS() as sct:
-                                img = np.array(sct.grab(sct.monitors[1]))[...,:3]
-                            if win_ox > -30000 and win_oy > -30000:
-                                win_w = best_t.get("window", {}).get("rect", [0,0,1920,1080])[2]
-                                win_h = best_t.get("window", {}).get("rect", [0,0,1920,1080])[3]
-                                roi_rect = (win_ox, win_oy, min(win_w, 1920), min(win_h, 1080))
-                            else:
-                                roi_rect = (screen_x - max(roi.get("w",20)*5, 200),
-                                            screen_y - max(roi.get("h",10)*5, 200),
-                                            max(roi.get("w",20)*11, 500),
-                                            max(roi.get("h",10)*11, 500))
-                            pt, sc = _template_match(img, tm_bgr, roi_rect)
-                            if pt and sc > 0.65:
-                                return pt
-                        except Exception:
-                            pass
-                        if _retry < 2:
-                            time.sleep([1, 2][_retry])  # exponential backoff
-            return None  # All retries failed
+                # Step 3: Full-screen fallback with estimated ROI
+                est_x = roi.get("x", 0)
+                est_y = roi.get("y", 0)
+                if win_rect:
+                    est_x += win_rect[0]
+                    est_y += win_rect[1]
+                roi_rect = (max(0, est_x - 200), max(0, est_y - 200),
+                            max(roi.get("w", 20) * 20, 600),
+                            max(roi.get("h", 10) * 20, 600))
+                pt, sc = _template_match(img, tm_bgr, roi_rect)
+                if pt and sc > 0.65:
+                    return pt
+
+            except Exception:
+                pass
+            if _retry < 2:
+                time.sleep([0.5, 1.5][_retry])
+
         return None
 
     def _check_template(self, t): return self._find_template(t) is not None

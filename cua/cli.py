@@ -480,6 +480,99 @@ def _get_script_index() -> dict:
     return cache
 
 
+def _k3_verify_script_result(task: str, script_path: str,
+                              result, config: dict) -> str | None:
+    """Ask K3 to verify whether a script actually completed the task.
+
+    Takes a screenshot, sends it to K3 with the original task, script
+    source, and execution result. K3 returns a verdict.
+
+    Returns:
+        "done" — task is confirmed complete
+        "retry_agent" — task NOT done, delegate to K3 Agent
+        None — verification failed (API error etc.), trust script result
+    """
+    import json as _json
+    from openai import OpenAI
+    from pathlib import Path
+
+    api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
+    if not api_key:
+        return None
+
+    model = config.get("model", "kimi-k3")
+    base_url = config.get("base_url", "https://api.moonshot.cn/v1")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
+    # Take a screenshot
+    try:
+        import mss, numpy as np
+        from cua.tools.screenshot import downsample_for_vlm, _np_to_png_b64
+        with mss.MSS() as sct:
+            monitor = sct.monitors[1]
+            img = np.array(sct.grab(monitor))
+        sc, _, _ = downsample_for_vlm(img, (0.5, 0.5),
+                                      monitor["width"], monitor["height"])
+        img_b64 = _np_to_png_b64(sc)
+    except Exception as e:
+        print(f"  [verify] screenshot failed: {e}")
+        return None
+
+    # Read script source (truncated)
+    try:
+        script_src = Path(script_path).read_text(encoding="utf-8")
+        if len(script_src) > 3000:
+            script_src = script_src[:3000] + "\n... [truncated]"
+    except Exception:
+        script_src = "(cannot read)"
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": (
+                    "You are a task completion verifier. Look at the screenshot, "
+                    "the original task, and the script that was just executed. "
+                    "Determine whether the task has been SUCCESSFULLY completed. "
+                    "Output JSON: "
+                    '{"verdict": "done"|"not_done", "reason": "brief explanation"}. '
+                    'If the task is clearly done, say "done". '
+                    'If ANY part of the task is incomplete, the UI is in a wrong state, '
+                    'or the desired outcome is not visible, say "not_done".'
+                )},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": img_b64}},
+                    {"type": "text", "text": (
+                        f"Original task: {task}\n\n"
+                        f"Script result: code={result.code}, "
+                        f"success={result.success_count}/{result.step_count} steps, "
+                        f"summary: {result.summary[:300]}\n\n"
+                        f"Script source:\n```cua\n{script_src}\n```\n\n"
+                        f"Look at the screenshot. Is the task complete?"
+                    )},
+                ]},
+            ],
+            response_format={"type": "json_object"},
+            reasoning_effort="low",
+            max_tokens=150,
+        )
+        verdict = _json.loads(resp.choices[0].message.content or "{}")
+        v = verdict.get("verdict", "")
+        reason = verdict.get("reason", "")[:100]
+        if v == "done":
+            print(f"  [verify] K3 confirms: task completed — {reason}")
+            return "done"
+        elif v == "not_done":
+            print(f"  [verify] K3 says: NOT done — {reason}")
+            return "retry_agent"
+        else:
+            print(f"  [verify] K3 unclear: {v} — trusting script result")
+            return None
+    except Exception as e:
+        print(f"  [verify] K3 call failed: {e}")
+        return None
+
+
 def _run_replay(task: str, config: dict):
     """Run a task in fast replay mode — K3 decides: script or normal agent."""
     from cua.recorder import _embed_text
@@ -508,12 +601,35 @@ def _run_replay(task: str, config: dict):
                         print("↪ Script returned 2 — delegating to K3 Agent")
                         report = run_task(result.summary, config)
                     else:
-                        report = {
-                            "success": result.code == 0,
-                            "summary": result.summary,
-                            "steps": [f"Script: {result.success_count}/{result.step_count} steps"],
-                            "tokens": {"total": 0},
-                        }
+                        # K3 verification: screenshot + verify task completion
+                        print("\n  [verify] K3 checking task completion...")
+                        verdict = _k3_verify_script_result(
+                            task, str(script_path), result, config
+                        )
+                        if verdict == "done":
+                            report = {
+                                "success": result.code == 0,
+                                "summary": result.summary + " [K3 verified: done]",
+                                "steps": [f"Script: {result.success_count}/{result.step_count} steps"],
+                                "tokens": {"total": 0},
+                            }
+                        elif verdict == "retry_agent":
+                            print("↪ K3 says task NOT done — delegating to K3 Agent")
+                            handoff = (
+                                f"Original task: {task}\n\n"
+                                f"A script was executed but verification shows the task "
+                                f"is NOT complete. Script result: {result.summary}\n\n"
+                                f"Please assess the current screen and complete the task."
+                            )
+                            report = run_task(handoff, config)
+                        else:
+                            # fallback or error — trust script result
+                            report = {
+                                "success": result.code == 0,
+                                "summary": result.summary,
+                                "steps": [f"Script: {result.success_count}/{result.step_count} steps"],
+                                "tokens": {"total": 0},
+                            }
                     _print_report(report)
                     return
                 elif decision and decision["action"] == "fallback":
@@ -582,7 +698,10 @@ def _print_report(report: dict):
 
     tokens = report.get("tokens")
     if tokens:
-        print(f"\nTokens: {tokens['total']:,} total ({tokens['prompt']:,} prompt + {tokens['completion']:,} completion)")
+        total = tokens.get("total", 0)
+        prompt = tokens.get("prompt", 0)
+        completion = tokens.get("completion", 0)
+        print(f"\nTokens: {total:,} total ({prompt:,} prompt + {completion:,} completion)")
 
     elapsed = report.get("elapsed")
     if elapsed is not None:

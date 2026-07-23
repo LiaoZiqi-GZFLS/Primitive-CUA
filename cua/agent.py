@@ -146,6 +146,50 @@ def _build_initial_content(task: str, mouse_pos, screen_w, screen_h):
     ]
 
 
+def _heal_orphaned_tool_calls(messages: list):
+    """Fix orphaned tool_calls: ensure every assistant tool_calls message
+    has matching tool response messages. Add error responses for any missing ones.
+
+    K3 rejects messages where tool_call_ids have no matching responses in context.
+    Context cleanup/compression can occasionally leave orphaned references.
+    """
+    # Collect all tool response IDs
+    responded_ids: set[str] = set()
+    for msg in messages:
+        if msg["role"] == "tool":
+            responded_ids.add(msg.get("tool_call_id", ""))
+
+    # Find orphaned tool_calls and inject error responses
+    fixed = 0
+    for i, msg in enumerate(messages):
+        if msg["role"] != "assistant":
+            continue
+        tcs = msg.get("tool_calls", [])
+        if not tcs:
+            continue
+
+        orphaned = [
+            tc for tc in tcs
+            if tc.get("id") and tc["id"] not in responded_ids
+        ]
+        if not orphaned:
+            continue
+
+        # Inject tool error responses right after this assistant message
+        for tc in orphaned:
+            name = tc.get("function", {}).get("name", "unknown")
+            messages.insert(i + 1, {
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "name": name,
+                "content": f" [orphaned] Tool call was lost during context cleanup. Please re-call {name}() if needed.",
+            })
+            fixed += 1
+
+    if fixed:
+        print(f"  [heal] fixed {fixed} orphaned tool response(s) in context")
+
+
 def _cleanup_context(messages: list):
     """Remove stale image messages after a state-changing action.
 
@@ -571,6 +615,10 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                     })
     
                 try:
+                    # Self-heal: ensure every assistant tool_calls has matching tool responses.
+                    # Context cleanup/compression can occasionally orphan references.
+                    _heal_orphaned_tool_calls(messages)
+
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
