@@ -15,3 +15,4 @@ chromadb>=0.5
 cairosvg>=2.7
 torch>=2.0
 transformers>=4.30
+fpdf2>=2.7

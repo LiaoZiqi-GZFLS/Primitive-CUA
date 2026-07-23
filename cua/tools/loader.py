@@ -25,7 +25,7 @@ WEB_TOOLS = [
 
 UIA_TOOLS = [
     "uia_inspect", "uia_click", "uia_set_value", "uia_get_text",
-    "run_command", "shell",
+    "run_command", "shell", "generate_pdf",
 ]
 
 WINDOWS_TOOLS = [

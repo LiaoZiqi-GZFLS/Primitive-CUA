@@ -51,6 +51,7 @@ from cua.tools.utility import (
 )
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
 from cua.tools.shell import SHELL_SCHEMA, execute_shell
+from cua.tools.pdf import PDF_SCHEMA, execute_generate_pdf
 from cua.subagents.draft_content import DRAFT_CONTENT_SCHEMA, execute_draft_content
 from cua.subagents.image_gen import GENERATE_IMAGE_SCHEMA, execute_generate_image
 from cua.tools.document import (
@@ -114,6 +115,7 @@ TOOLS = [
     CLEANUP_DOCUMENTS_SCHEMA,
     HUMAN_HELP_SCHEMA,
     SHELL_SCHEMA,
+    PDF_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -285,6 +287,13 @@ def execute_tool(
             args["command"],
             timeout=args.get("timeout", 30),
             cwd=args.get("cwd"),
+        )
+
+    elif name == "generate_pdf":
+        return execute_generate_pdf(
+            args["title"],
+            args["content"],
+            args.get("filename", ""),
         )
 
     elif name == "wait":
