@@ -67,25 +67,51 @@ def _get_embedding_function():
     # Uses sentence_transformers directly — loads from local cache, no network
     if _cached_embed_fn is None or retry:
         try:
-            from sentence_transformers import SentenceTransformer
             import os as _os
-            _prev_hf = _os.environ.get("HF_HUB_OFFLINE", "")
-            _prev_tr = _os.environ.get("TRANSFORMERS_OFFLINE", "")
             _os.environ["HF_HUB_OFFLINE"] = "1"
             _os.environ["TRANSFORMERS_OFFLINE"] = "1"
-            st = SentenceTransformer(
-                "paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
+            from transformers import AutoTokenizer, AutoModel
+            import torch
+
+            # Find model in HuggingFace cache
+            _cache_root = _os.path.expanduser(
+                "~/.cache/huggingface/hub/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
             )
-            for k, v in [("HF_HUB_OFFLINE", _prev_hf), ("TRANSFORMERS_OFFLINE", _prev_tr)]:
-                if v: _os.environ[k] = v
-                else: _os.environ.pop(k, None)
+            _snapshots = _os.path.join(_cache_root, "snapshots")
+            if _os.path.isdir(_snapshots):
+                _dirs = [d for d in _os.listdir(_snapshots)
+                         if _os.path.isdir(_os.path.join(_snapshots, d))]
+                model_path = _os.path.join(_snapshots, _dirs[0]) if _dirs else "paraphrase-multilingual-MiniLM-L12-v2"
+            else:
+                model_path = "paraphrase-multilingual-MiniLM-L12-v2"
+
+            tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+            model = AutoModel.from_pretrained(model_path, local_files_only=True)
+
+            def _mean_pooling(model_output, attention_mask):
+                token_embeddings = model_output.last_hidden_state
+                input_mask_expanded = attention_mask.unsqueeze(-1).expand(
+                    token_embeddings.size()).float()
+                return (token_embeddings * input_mask_expanded).sum(1) / (
+                    input_mask_expanded.sum(1) + 1e-9)
+
             def _encode(texts):
-                return st.encode(texts, show_progress_bar=False).tolist()
+                if isinstance(texts, str):
+                    texts = [texts]
+                encoded = tokenizer(
+                    texts, padding=True, truncation=True,
+                    max_length=128, return_tensors="pt"
+                )
+                with torch.no_grad():
+                    output = model(**encoded)
+                embeddings = _mean_pooling(output, encoded["attention_mask"])
+                return embeddings.numpy().tolist()
+
             _ = _encode(["test"])
             _cached_embed_fn = _encode
             _cached_embed_type = "multilingual"
             _cached_embed_at = _time.time()
-            print("  [embed] multilingual MiniLM-L12 (zh+en, local)")
+            print("  [embed] multilingual MiniLM-L12 (zh+en, offline)")
             return _encode
         except Exception:
             pass
