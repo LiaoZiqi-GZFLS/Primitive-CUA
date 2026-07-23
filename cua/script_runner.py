@@ -51,6 +51,7 @@ Usage:
   if ocr text                 # Text on screen?
   if window title_part        # Window with title open?
   if url url_part             # Current browser URL contains?
+  if not see target           # Negation — element NOT visible
     ...               (indent 4 spaces for body)
   else
     ...
@@ -60,14 +61,26 @@ Usage:
     ...
   endrepeat
 
+  retry N               (repeat up to N times, stop on first success)
+    ...
+  endretry
+
   while kimi question   (re-evaluates condition each iteration)
     ...
   endwhile
+
+  try                   (catch errors, execute catch block on failure)
+    ...
+  catch
+    ...
+  endtry
 
   goto label             label name
   wait_until see target [timeout 10]
   fail reason
   exec macro_name        # Run another macro inline
+  input var prompt       # Read user input into $var
+  sleep seconds          # Alias for wait
 
   # ── Built-in variables ──
   $screen_w / $screen_h   $ocr_result   $last_result   $now
@@ -133,18 +146,21 @@ class ScriptEngine:
 
     VALID_COMMANDS = {
         "click", "dblclick", "uia_click", "web_click", "type", "keys",
-        "launch", "wait", "scroll", "navigate", "drag",
-        "screenshot", "ocr", "move", "set", "print", "exec",
+        "launch", "wait", "sleep", "scroll", "navigate", "drag",
+        "screenshot", "ocr", "move", "set", "print", "input", "exec",
         "if", "else", "endif", "repeat", "endrepeat",
-        "while", "endwhile", "goto", "label",
+        "while", "endwhile", "retry", "endretry",
+        "try", "catch", "endtry", "goto", "label",
         "wait_until", "fail", "finish", "return",
     }
-    BLOCK_STARTS = {"if", "repeat", "while"}
-    BLOCK_ENDS = {"endif": "if", "endrepeat": "repeat", "endwhile": "while"}
+    BLOCK_STARTS = {"if", "repeat", "while", "retry", "try"}
+    BLOCK_ENDS = {"endif": "if", "endrepeat": "repeat", "endwhile": "while",
+                  "endretry": "retry", "endtry": "try", "catch": "try"}
     REQUIRES_ARG = {
         "click", "dblclick", "uia_click", "web_click", "type", "keys", "launch",
         "goto", "label", "set", "scroll", "navigate", "wait_until",
-        "if", "while", "finish", "return", "wait", "fail",
+        "if", "while", "finish", "return", "wait", "sleep", "fail",
+        "retry", "input",
     }
 
     def validate(self, script_path: str) -> list[str]:
@@ -191,11 +207,11 @@ class ScriptEngine:
                     errors.append(f"  L{lineno}: 'endif' without matching 'if'")
                 else:
                     block_stack.pop()
-            elif cmd in ("endrepeat", "endwhile"):
+            elif cmd in ("endrepeat", "endwhile", "endretry", "endtry", "catch"):
                 expected = self.BLOCK_ENDS.get(cmd)
                 if not block_stack or block_stack[-1][0] != expected:
                     errors.append(f"  L{lineno}: '{cmd}' without matching '{expected}'")
-                else:
+                elif cmd != "catch":  # catch doesn't pop
                     block_stack.pop()
 
             # Label registration
@@ -373,7 +389,12 @@ class ScriptEngine:
                     if self._while_cond(self._lines[si]):
                         ip = si + 1; continue
                 ip += 1; continue
-            if cmd == "endrepeat":
+            if cmd in ("endrepeat", "endretry"):
+                ip += 1; continue
+            if cmd == "catch":
+                # Skip catch block (already handled below)
+                ip = self._skip_to(ip, "endtry") + 1; continue
+            if cmd == "endtry":
                 ip += 1; continue
 
             # Commands
@@ -382,6 +403,13 @@ class ScriptEngine:
             elif cmd == "while":
                 while_stack.append((ip, inst["indent"], 0))
                 ip = ip + 1 if self._while_cond(inst) else self._skip_to(ip, "endwhile") + 1
+            elif cmd == "retry":
+                n = int(inst["args"][0]) if inst["args"] else 3
+                self._do_retry(ip, n); ip = self._skip_to(ip, "endretry") + 1
+            elif cmd == "try":
+                self._do_try(ip); ip = self._skip_to(ip, "endtry") + 1
+            elif cmd == "input":
+                self._do_input(inst); ip += 1
             elif cmd == "goto":
                 ip = self._do_goto(inst)
             elif cmd == "label":
@@ -415,7 +443,7 @@ class ScriptEngine:
             if li["cmd"] == target and li["indent"] == indent:
                 depth -= 1
                 if depth == 0: return i
-            elif li["cmd"] in ("while", "repeat") and li["indent"] == indent:
+            elif li["cmd"] in self.BLOCK_STARTS and li["indent"] == indent:
                 depth += 1
             i += 1
         return len(self._lines) - 1
@@ -427,16 +455,21 @@ class ScriptEngine:
     # ── Control flow handlers ──
 
     def _do_if(self, inst, ip, if_stack) -> int:
-        cond = inst["args"][0] if inst["args"] else ""
-        args = inst["args"][1:]
-        prompt = " ".join(args)
+        orig = inst["args"][:] if inst["args"] else []
+        negate = False
+        if orig and orig[0] == "not":
+            negate = True; orig = orig[1:]
+        cond = orig[0] if orig else ""
+        prompt = " ".join(orig[1:])
         checks = {"kimi": self._ask_kimi, "see": self._check_template,
                   "ocr": self._check_ocr, "window": self._check_window,
                   "url": self._check_url}
         result = checks.get(cond, lambda _: False)(prompt)
+        if negate:
+            result = not result
         if_stack.append((ip, inst["indent"], result))
         if self.debug:
-            print(f"  [if] {cond}('{prompt[:50]}') → {result}")
+            print(f"  [if] {'not ' if negate else ''}{cond}('{prompt[:50]}') → {result}")
         return ip + 1
 
     def _do_goto(self, inst) -> int:
@@ -491,6 +524,63 @@ class ScriptEngine:
                 if r["success"]:
                     self._success_count += len(macro["steps"])
 
+    def _do_retry(self, ip: int, n: int):
+        """Execute body up to N times, stop on first success."""
+        end_ip = self._skip_to(ip, "endretry")
+        best_step = self._step_count
+        self._step_count += 1
+        print(f"  [retry] up to {n} times...")
+        for attempt in range(n):
+            if self.debug:
+                print(f"  [retry] attempt {attempt + 1}/{n}")
+            prev_ok = self._success_count
+            # Execute body
+            body_ip = ip + 1
+            while body_ip < end_ip:
+                inst = self._lines[body_ip]
+                if inst["cmd"] in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
+                    body_ip += 1; continue
+                self._do_action(inst)
+                body_ip += 1
+            # If body succeeded (success count increased), stop
+            if self._success_count > prev_ok:
+                print(f"  [retry] success on attempt {attempt + 1}")
+                break
+
+    def _do_try(self, ip: int):
+        """Execute try block, on failure execute catch block."""
+        catch_ip = self._skip_to(ip, "catch")
+        end_ip = self._skip_to(ip, "endtry")
+        self._step_count += 1
+        try:
+            body_ip = ip + 1
+            while body_ip < catch_ip:
+                inst = self._lines[body_ip]
+                if inst["cmd"] in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
+                    body_ip += 1; continue
+                self._do_action(inst)
+                body_ip += 1
+        except Exception as e:
+            print(f"  [try] caught: {e}")
+            # Execute catch block
+            body_ip = catch_ip + 1
+            while body_ip < end_ip:
+                inst = self._lines[body_ip]
+                if inst["cmd"] in ("endrepeat", "endretry", "endwhile", "endif", "endtry"):
+                    body_ip += 1; continue
+                if inst["cmd"] not in self.VALID_COMMANDS:
+                    body_ip += 1; continue
+                try: self._do_action(inst)
+                except: pass
+                body_ip += 1
+
+    def _do_input(self, inst):
+        """Read user input into a variable."""
+        var = inst["args"][0] if inst["args"] else "input"
+        prompt = " ".join(inst["args"][1:]) + " " if len(inst["args"]) > 1 else ""
+        self.vars[var] = input(f"  [input] {prompt}").strip()
+        print(f"  [input] ${var} = '{self.vars[var][:40]}'")
+
     def _do_wait_until(self, inst):
         args = inst["args"]
         if len(args) < 2: return
@@ -522,7 +612,8 @@ class ScriptEngine:
             "uia_click": self._act_uia_click,
             "web_click": self._act_web_click, "type": self._act_type,
             "keys": self._act_keys, "launch": self._act_launch,
-            "wait": self._act_wait, "scroll": self._act_scroll,
+            "wait": self._act_wait, "sleep": self._act_wait,
+            "scroll": self._act_scroll,
             "navigate": self._act_navigate, "drag": self._act_drag,
             "screenshot": self._act_screenshot, "ocr": self._act_ocr,
             "move": self._act_move,

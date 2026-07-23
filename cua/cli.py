@@ -117,22 +117,21 @@ def _run_script(task: str, config: dict, client, model: str):
 
 
 def _run_replay(task: str, config: dict):
-    """Run a task in fast replay mode. Priority: script > macro > template."""
-    from cua.fast_replay import replay_task, replay_macro
-    from cua.recorder import load_macro, _embed_text
+    """Run a task in fast replay mode — searches .cua scripts by embedding."""
+    from cua.recorder import _embed_text
     from cua.script_runner import ScriptEngine
 
     try:
-        # 1. Search .cua scripts by embedding similarity
+        # Search .cua scripts by embedding similarity
         import numpy as np
         from pathlib import Path
         script_dir = Path("cua/data/scripts")
-        if script_dir.exists():
-            scripts = list(script_dir.glob("*.cua"))
+        scripts = list(script_dir.glob("*.cua")) if script_dir.exists() else []
+
+        if scripts:
             task_vec = _embed_text(task[:200])
             best_s, best_script = 0, None
             for sc in scripts:
-                # Use first comment line as description, or filename
                 try:
                     first = sc.read_text(encoding="utf-8").split("\n")[0]
                     desc = first.lstrip("# ").strip()[:100] or sc.stem
@@ -161,14 +160,9 @@ def _run_replay(task: str, config: dict):
                 _print_report(report)
                 return
 
-        # 2. Search macros
-        macro = load_macro(task)
-        if macro:
-            print(f"  📋 Found macro: {macro['name']} ({len(macro['steps'])} steps)\n")
-            report = replay_macro(task, config)
-        else:
-            # 3. Template-based replay
-            report = replay_task(task, config)
+        # No matching script — fall back to K3 Agent
+        print(f"  No matching script found — falling back to K3 Agent\n")
+        report = run_task(task, config)
         _print_report(report)
     except KeyboardInterrupt:
         print("\n  ⏹ Replay cancelled.\n")
