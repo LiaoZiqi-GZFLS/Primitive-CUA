@@ -41,8 +41,12 @@ def main():
 
     # Parse flags
     args = sys.argv[1:]
+    repair_mode = False
     record_mode = False
     replay_mode = False
+    if "--repair" in args:
+        repair_mode = True
+        args.remove("--repair")
     if "--record" in args:
         record_mode = True
         args.remove("--record")
@@ -53,6 +57,11 @@ def main():
     if "--script" in args:
         script_mode = True
         args.remove("--script")
+
+    # --repair: rebuild all vector indices
+    if repair_mode:
+        _repair_indices(config)
+        return
 
     # If task provided as command-line argument, run it once
     if args:
@@ -95,6 +104,42 @@ def main():
             _run_replay(task, config)
         else:
             _run_with_cancel(task, config, client, model, record_mode=record_mode)
+
+
+def _repair_indices(config: dict):
+    """Rebuild all vector indices — script index, ChromaDB collections."""
+    import shutil
+    from pathlib import Path
+
+    print("Repairing vector indices...\n")
+
+    # 1. Delete script index cache
+    idx_path = Path("cua/data/scripts/_index.json")
+    if idx_path.exists():
+        idx_path.unlink()
+        print("  [OK] Deleted script index cache")
+
+    # 2. Delete ChromaDB data
+    chroma_dir = Path("cua/data/chroma")
+    if chroma_dir.exists():
+        shutil.rmtree(chroma_dir)
+        print("  [OK] Deleted ChromaDB embeddings")
+
+    # 3. Rebuild script index
+    print("\nRebuilding script index...")
+    from cua.recorder import _embed_text
+    idx = _get_script_index()
+    print(f"  [OK] Indexed {len(idx)} scripts")
+
+    # 4. Rebuild ChromaDB collections
+    print("\nRebuilding ChromaDB...")
+    from cua.learning import _get_skills_collection, index_knowledge, _get_knowledge_collection
+    _get_skills_collection()
+    _get_knowledge_collection()
+    n = index_knowledge()
+    print(f"  [OK] Knowledge base indexed: {n} files")
+
+    print("\nAll vector indices rebuilt with multilingual embeddings.")
 
 
 def _run_script(task: str, config: dict, client, model: str):

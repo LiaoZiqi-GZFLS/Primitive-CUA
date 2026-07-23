@@ -34,6 +34,47 @@ _cached_embed_type = ""     # "multilingual" or "onnx"
 _cached_embed_at = 0.0       # last cache time
 
 
+class _MultilingualEF:
+    """ChromaDB-compatible embedding function wrapping transformers model."""
+
+    def __init__(self, model, tokenizer):
+        self._model = model
+        self._tokenizer = tokenizer
+        import torch
+        self._torch = torch
+
+    def name(self):
+        return "paraphrase-multilingual-MiniLM-L12-v2"
+
+    def embed_query(self, input=None, **kwargs) -> list[list[float]]:
+        # ChromaDB 1.x passes 'input' as kwarg, expects list[list[float]]
+        text = input if input is not None else kwargs.get("texts", kwargs.get("query", ""))
+        if isinstance(text, str):
+            text = [text]
+        return self(list(text))
+
+    def embed_documents(self, input=None, **kwargs) -> list[list[float]]:
+        documents = input if input is not None else kwargs.get("input", kwargs.get("documents", []))
+        if isinstance(documents, str):
+            documents = [documents]
+        return self(list(documents))
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        if isinstance(input, str):
+            input = [input]
+        encoded = self._tokenizer(
+            input, padding=True, truncation=True,
+            max_length=128, return_tensors="pt"
+        )
+        with self._torch.no_grad():
+            output = self._model(**encoded)
+        token_embeddings = output.last_hidden_state
+        mask = encoded["attention_mask"].unsqueeze(-1).expand(
+            token_embeddings.size()).float()
+        pooled = (token_embeddings * mask).sum(1) / (mask.sum(1) + 1e-9)
+        return pooled.numpy().tolist()
+
+
 def _try_upgrade_embedding():
     """Force reload embedding — call after VPN connects."""
     global _cached_embed_fn, _cached_embed_type, _cached_embed_at
@@ -88,33 +129,16 @@ def _get_embedding_function():
             tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
             model = AutoModel.from_pretrained(model_path, local_files_only=True)
 
-            def _mean_pooling(model_output, attention_mask):
-                token_embeddings = model_output.last_hidden_state
-                input_mask_expanded = attention_mask.unsqueeze(-1).expand(
-                    token_embeddings.size()).float()
-                return (token_embeddings * input_mask_expanded).sum(1) / (
-                    input_mask_expanded.sum(1) + 1e-9)
-
-            def _encode(texts):
-                if isinstance(texts, str):
-                    texts = [texts]
-                encoded = tokenizer(
-                    texts, padding=True, truncation=True,
-                    max_length=128, return_tensors="pt"
-                )
-                with torch.no_grad():
-                    output = model(**encoded)
-                embeddings = _mean_pooling(output, encoded["attention_mask"])
-                return embeddings.numpy().tolist()
-
-            _ = _encode(["test"])
-            _cached_embed_fn = _encode
+            ef = _MultilingualEF(model, tokenizer)
+            _ = ef(["test"])
+            _cached_embed_fn = ef
             _cached_embed_type = "multilingual"
             _cached_embed_at = _time.time()
             print("  [embed] multilingual MiniLM-L12 (zh+en, offline)")
-            return _encode
-        except Exception:
-            pass
+            return ef
+        except Exception as _e:
+            print(f"  [embed] multilingual unavailable: {_e}")
+            print(f"  [embed] falling back to ONNX...")
 
     # Return existing ONNX if available
     if _cached_embed_fn is not None and _cached_embed_type == "onnx":
