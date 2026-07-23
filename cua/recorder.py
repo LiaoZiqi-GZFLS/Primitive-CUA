@@ -582,6 +582,11 @@ CUA_SCRIPT_SYNTAX = """
   move <x> <y>                # Move mouse (normalized 0-1 coords)
   screenshot [path]            # Save screenshot to file
   ocr [path]                  # Run OCR, result in $ocr_result
+  shell <command> [timeout=30] [cwd=...]  # Execute shell cmd → $shell_result
+  ask <prompt>                 # Request human help → $ask_result
+  draft <task> [persona]       # Subagent DraftContent → $draft_result
+  genimg <requirement>         # Subagent GenerateImage → $genimg_result
+  kimi <subtask> [steps=N]    # K3 Agent takes over (up to N steps) → $kimi_result
 
 ### Variables
   set <name> <value>          # Set variable: $name = value
@@ -629,6 +634,31 @@ CUA_SCRIPT_SYNTAX = """
   return 1 <summary>          # Failure
   return 2 <summary>          # Delegate to K3 Agent
 
+### Subagent + Type Pattern
+  # Generate content via subagent, then paste into target:
+  draft write a formal email to client "professional"
+  launch notepad
+  wait 1.5
+  type $draft_result
+
+  # Shell output → variable → paste:
+  shell dir /b
+  type $shell_result
+
+### K3 Handoff Pattern (mid-script AI)
+  # Delegate a complex step to K3, then continue:
+  kimi "find the search box, click it, type 'hello' and press enter" steps=10
+  if ocr "results found"
+      return 0 search completed
+  endif
+
+  # Conditional fallback — try script first, K3 if stuck:
+  try
+      click settings-button
+  catch
+      kimi "navigate to settings page" steps=5
+  endtry
+
 ### Robustness Pattern (REQUIRED)
   # Every click should be guarded:
   try
@@ -650,6 +680,12 @@ CUA_SCRIPT_SYNTAX = """
 ### Built-in Variables
   $screen_w, $screen_h        # Screen resolution in pixels
   $ocr_result                 # Output of last ocr command
+  $shell_result               # Output of last shell command
+  $ask_result                 # Response from last ask (human)
+  $draft_result              # Output from last draft (subagent)
+  $genimg_result             # Output from last genimg (subagent)
+  $kimi_result               # Summary from last kimi (K3 subtask)
+  $last_result               # Output of last action (any type)
   $now                        # Current timestamp (ms)
 """
 

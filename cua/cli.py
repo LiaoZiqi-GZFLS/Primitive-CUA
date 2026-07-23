@@ -486,6 +486,18 @@ def _print_report(report: dict):
     if tokens:
         print(f"\nTokens: {tokens['total']:,} total ({tokens['prompt']:,} prompt + {tokens['completion']:,} completion)")
 
+    elapsed = report.get("elapsed")
+    if elapsed is not None:
+        mins = int(elapsed // 60)
+        secs = elapsed % 60
+        if mins > 0:
+            print(f"Time: {mins}m {secs:.1f}s")
+        else:
+            print(f"Time: {secs:.1f}s")
+        hw = report.get("human_wait", 0)
+        if hw > 1:
+            print(f"  (excl. {hw:.0f}s human wait)")
+
     print()
 
 

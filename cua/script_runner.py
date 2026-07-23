@@ -44,6 +44,11 @@ Usage:
   screenshot [path]           # Save screenshot
   ocr [path]                  # OCR → $ocr_result
   move x y                    # Move mouse (normalized 0-1)
+  shell command [timeout]     # Execute shell, output → $shell_result
+  ask prompt                  # Request human help, response → $ask_result
+  draft task persona          # Subagent DraftContent, output → $draft_result
+  genimg requirement          # Subagent GenerateImage, output → $genimg_result
+  kimi subtask [steps=N]      # K3 Agent takes over for subtask → $kimi_result
 
   # ── Control flow ──
   if kimi question            # K3 vision: yes/no
@@ -83,7 +88,9 @@ Usage:
   sleep seconds          # Alias for wait
 
   # ── Built-in variables ──
-  $screen_w / $screen_h   $ocr_result   $last_result   $now
+  $screen_w / $screen_h   $ocr_result   $shell_result
+  $ask_result   $draft_result   $genimg_result   $kimi_result
+  $last_result   $now
 """
 import json
 import os
@@ -148,6 +155,7 @@ class ScriptEngine:
         "click", "dblclick", "uia_click", "web_click", "type", "keys",
         "launch", "wait", "sleep", "scroll", "navigate", "drag",
         "screenshot", "ocr", "move", "set", "print", "input", "exec",
+        "shell", "ask", "draft", "genimg", "kimi",
         "if", "else", "endif", "repeat", "endrepeat",
         "while", "endwhile", "retry", "endretry",
         "try", "catch", "endtry", "goto", "label",
@@ -160,7 +168,7 @@ class ScriptEngine:
         "click", "dblclick", "uia_click", "web_click", "type", "keys", "launch",
         "goto", "label", "set", "scroll", "navigate", "wait_until",
         "if", "while", "finish", "return", "wait", "sleep", "fail",
-        "retry", "input",
+        "retry", "input", "shell", "ask", "draft", "genimg", "kimi",
     }
 
     def validate(self, script_path: str) -> list[str]:
@@ -294,6 +302,11 @@ class ScriptEngine:
             "screen_h": str(pyautogui.size()[1]),
             "now": str(int(time.time() * 1000)),
             "ocr_result": "",
+            "shell_result": "",
+            "ask_result": "",
+            "draft_result": "",
+            "genimg_result": "",
+            "kimi_result": "",
             "last_result": "",
         }
         # Labels are registered during _parse() — don't clear them
@@ -650,6 +663,9 @@ class ScriptEngine:
             "navigate": self._act_navigate, "drag": self._act_drag,
             "screenshot": self._act_screenshot, "ocr": self._act_ocr,
             "move": self._act_move,
+            "shell": self._act_shell, "ask": self._act_ask,
+            "draft": self._act_draft, "genimg": self._act_genimg,
+            "kimi": self._act_kimi,
         }
         h = handlers.get(cmd)
         if h:
@@ -801,6 +817,187 @@ class ScriptEngine:
         import pyautogui
         pyautogui.moveTo(int(float(args[0]) * pyautogui.size()[0]),
                          int(float(args[1]) * pyautogui.size()[1])); time.sleep(0.1)
+
+    def _act_shell(self, args):
+        """Execute shell command, store output in $shell_result."""
+        from cua.tools.shell import execute_shell
+        cmd_parts, timeout, cwd = [], 30, None
+        for a in args:
+            if a.startswith("timeout="):
+                try: timeout = float(a.split("=", 1)[1])
+                except: pass
+            elif a.startswith("cwd="):
+                cwd = a.split("=", 1)[1]
+            else:
+                cmd_parts.append(a)
+        cmd = " ".join(cmd_parts)
+        print(f"  $ {cmd}")
+        result = execute_shell(cmd, timeout=timeout, cwd=cwd)
+        self.vars["shell_result"] = result["content"][0]["text"]
+        self.vars["last_result"] = self.vars["shell_result"]
+
+    def _act_ask(self, args):
+        """Request human help, store response in $ask_result."""
+        from cua.tools.human import execute_human_help
+        prompt = " ".join(args)
+        result = execute_human_help(prompt)
+        self.vars["ask_result"] = result["content"][0]["text"]
+        self.vars["last_result"] = self.vars["ask_result"]
+
+    def _act_draft(self, args):
+        """Call DraftContent subagent, store output in $draft_result."""
+        if not args:
+            raise RuntimeError("draft requires task and persona")
+        task_text = args[0] if len(args) == 1 else " ".join(args[:-1])
+        persona = args[-1] if len(args) > 1 else "professional writer"
+        from cua.subagents.draft_content import execute_draft_content
+        print(f"  [draft] generating content...")
+        result = execute_draft_content(task_text, persona, max_chars=4000)
+        self.vars["draft_result"] = result["content"][0]["text"]
+        self.vars["last_result"] = self.vars["draft_result"]
+        print(f"  [draft] {len(self.vars['draft_result'])} chars")
+
+    def _act_genimg(self, args):
+        """Call GenerateImage subagent, store output in $genimg_result."""
+        req = " ".join(args)
+        if not req:
+            raise RuntimeError("genimg requires a description")
+        from cua.subagents.image_gen import execute_generate_image
+        print(f"  [genimg] generating image...")
+        result = execute_generate_image(req)
+        self.vars["genimg_result"] = result["content"][0]["text"]
+        self.vars["last_result"] = self.vars["genimg_result"]
+
+    def _act_kimi(self, args):
+        """Run K3 Agent for a subtask, store finish summary in $kimi_result.
+
+        K3 gets screenshots + tools and can perform real actions. The script
+        pauses while K3 works, then continues with $kimi_result set.
+
+        Syntax: kimi "subtask description" [steps=8]
+        """
+        import json as _json
+        from openai import OpenAI
+        import mss
+
+        # Parse args: subtask text + optional steps=N
+        cmd_args = []
+        max_steps = 8
+        for a in args:
+            if a.startswith("steps="):
+                try: max_steps = min(int(a.split("=", 1)[1]), 20)
+                except: pass
+            else:
+                cmd_args.append(a)
+        subtask = " ".join(cmd_args)
+        if not subtask:
+            raise RuntimeError("kimi requires a subtask description")
+
+        ak = self.config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
+        if not ak:
+            raise RuntimeError("kimi requires MOONSHOT_API_KEY")
+
+        model = self.config.get("model", "kimi-k3")
+        base_url = self.config.get("base_url", "https://api.moonshot.cn/v1")
+        client = OpenAI(api_key=ak, base_url=base_url)
+
+        from cua.tools.__init__ import TOOLS, execute_tool
+        from cua.tools.screenshot import downsample_for_vlm, _np_to_png_b64
+
+        print(f"  [kimi] delegating subtask (max {max_steps} steps): {subtask[:80]}")
+
+        with mss.MSS() as sct:
+            monitor = sct.monitors[1]
+            sw, sh = monitor["width"], monitor["height"]
+            mouse_pos = (0.5, 0.5)
+
+            img = np.array(sct.grab(monitor))
+            sc, _, _ = downsample_for_vlm(img, (0.5, 0.5), sw, sh)
+
+            messages = [
+                {"role": "system", "content": (
+                    "You are a Computer Use Agent helping a script. "
+                    "Complete the subtask using tools, then call finish(). "
+                    "Work efficiently — you have limited steps. "
+                    "If you cannot complete the subtask, call finish(success=false)."
+                )},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": _np_to_png_b64(sc)}},
+                    {"type": "text", "text": f"Subtask: {subtask}\nScreen: {sw}x{sh}"},
+                ]},
+            ]
+
+            for step in range(max_steps):
+                try:
+                    resp = client.chat.completions.create(
+                        model=model, messages=messages, tools=TOOLS,
+                        max_completion_tokens=16384,
+                        reasoning_effort="low",
+                    )
+                except Exception as e:
+                    print(f"  [kimi] API error: {e}")
+                    break
+
+                choice = resp.choices[0]
+                msg = choice.message
+
+                if not msg.tool_calls:
+                    if msg.content:
+                        messages.append({"role": "assistant", "content": msg.content})
+                    continue
+
+                # Build assistant message with tool_calls
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {"id": tc.id, "type": "function",
+                         "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                        for tc in msg.tool_calls
+                    ],
+                }
+                messages.append(assistant_msg)
+
+                for tc in msg.tool_calls:
+                    name = tc.function.name
+                    try: a = _json.loads(tc.function.arguments)
+                    except _json.JSONDecodeError: a = {}
+
+                    print(f"    [kimi:{step+1}] {name} {str(a)[:80]}")
+
+                    try:
+                        result = execute_tool(name, a, sct, mouse_pos, sw, sh, img)
+                    except Exception as e:
+                        result = {"content": [{"type": "text", "text": f"Error: {e}"}],
+                                  "mouse_pos": None, "last_screenshot": img}
+
+                    if result.get("mouse_pos") is not None:
+                        mouse_pos = result["mouse_pos"]
+                    if result.get("last_screenshot") is not None:
+                        img = result["last_screenshot"]
+
+                    if name == "finish" and "_finish_report" in result:
+                        fr = result["_finish_report"]
+                        summary = fr.get("summary", "done")
+                        success = fr.get("success", False)
+                        self.vars["kimi_result"] = summary
+                        self.vars["last_result"] = summary
+                        print(f"  [kimi] {'✓' if success else '✗'} {summary[:100]}")
+                        return
+
+                    tool_text = " ".join(
+                        item.get("text", "") for item in result["content"]
+                        if item.get("type") == "text"
+                    )
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "name": name, "content": tool_text,
+                    })
+
+            # Ran out of steps
+            self.vars["kimi_result"] = f"K3 ran out of steps ({max_steps}) for: {subtask[:80]}"
+            self.vars["last_result"] = self.vars["kimi_result"]
+            print(f"  [kimi] max steps reached — continuing script")
 
     # ── Perception ──
 

@@ -11,7 +11,7 @@
 (纯文本)     (L0/L1/L2)   (完整工具调用)
 ```
 
-脚本引擎是文本 DSL 解释器。脚本文件 (.cua) 包含动作、变量、条件分支和循环，由 `ScriptEngine` 逐行解释执行。不依赖 LLM（除 `if kimi` / `while kimi` 条件）。
+脚本引擎是文本 DSL 解释器。脚本文件 (.cua) 包含动作、变量、条件分支和循环，由 `ScriptEngine` 逐行解释执行。除 `if kimi` / `while kimi` / `kimi` 外不依赖 LLM。
 
 ### 如何执行
 
@@ -84,13 +84,18 @@ python cua/script_runner.py script.cua --step
 
 内置变量：
 
-| 变量             | 含义                       | 示例值                   |
-| ---------------- | -------------------------- | ------------------------ |
-| `$screen_w`    | 屏幕宽度 (px)              | `1920`                 |
-| `$screen_h`    | 屏幕高度 (px)              | `1080`                 |
-| `$ocr_result`  | 最近一次`ocr` 的文本输出 | `"微信 搜索 火眼审阅"` |
-| `$last_result` | 最近一次命令的输出         | 文件路径或文本           |
-| `$now`         | 当前时间戳 (ms)            | `1700000000000`        |
+| 变量               | 含义                                | 示例值                   |
+| ------------------ | ----------------------------------- | ------------------------ |
+| `$screen_w`      | 屏幕宽度 (px)                       | `1920`                 |
+| `$screen_h`      | 屏幕高度 (px)                       | `1080`                 |
+| `$ocr_result`    | 最近一次`ocr` 的文本输出          | `"微信 搜索 火眼审阅"` |
+| `$shell_result`  | 最近一次`shell` 的 stdout/stderr  | `"Directory: E:\..."`  |
+| `$ask_result`    | 最近一次`ask` 的人工回复          | `"已完成登录"`         |
+| `$draft_result`  | 最近一次`draft` 生成的文本        | `"尊敬的客户..."`      |
+| `$genimg_result` | 最近一次`genimg` 的结果路径       | `"output/xxx.png"`     |
+| `$kimi_result`   | 最近一次`kimi` 的 K3 摘要         | `"搜索完成，找到3条"`   |
+| `$last_result`   | 最近一次命令的输出                  | 任意命令的输出           |
+| `$now`           | 当前时间戳 (ms)                     | `1700000000000`        |
 
 ---
 
@@ -109,6 +114,7 @@ python cua/script_runner.py script.cua --step
 
 ```
 click [target]            模板匹配按钮并点击，target 为元件 OCR 文字
+dblclick [target]         模板匹配按钮并双击
 uia_click [name]          UIA Invoke 点击控件
 web_click [text]          Playwright 点击网页元素
 type [text]               剪贴板粘贴文本（Ctrl+V）
@@ -121,6 +127,11 @@ drag [fx] [fy] [tx] [ty]  鼠标拖拽（归一化坐标 0-1）
 move [x] [y]              移动鼠标到归一化坐标
 screenshot [path]         保存当前屏幕截图
 ocr [path]                屏幕 OCR，结果存 $ocr_result
+shell [cmd] [timeout=30]  执行命令行（subprocess），输出 → $shell_result
+ask [prompt]              暂停请求人工帮助，回复 → $ask_result
+draft [task] [persona]    DraftContent 子代理写文章 → $draft_result
+genimg [requirement]      GenerateImage 子代理生成图 → $genimg_result
+kimi [subtask] [steps=8]  K3 Agent 接管子任务（最多 N 步） → $kimi_result
 ```
 
 #### 变量
@@ -323,6 +334,100 @@ python cua/element_manager.py search "微信"
 # 导出/导入
 python cua/element_manager.py export
 python cua/element_manager.py import elements.json
+```
+
+---
+
+## K3 接力 (Mid-Script AI Handoff)
+
+`kimi` 命令在脚本中间调用 K3 Agent 处理复杂子任务，完成后脚本继续执行。
+
+```cua
+# 基础用法：让K3处理一个复杂步骤
+kimi "find the search box, click it, type 'hello' and press enter" steps=10
+
+# 检查K3的结果
+if ocr "results found"
+    return 0 search completed
+endif
+
+# try/catch + K3 兜底
+try
+    click settings-button
+catch
+    kimi "navigate to settings page" steps=5
+endtry
+```
+
+**工作原理**：
+1. 截取当前屏幕 → 发送给 K3
+2. K3 使用全套工具（点击、输入、OCR 等）执行子任务
+3. K3 调用 `finish()` → 摘要写入 `$kimi_result`
+4. 脚本继续执行后续命令
+
+**与 `return 2` 的区别**：
+| | `kimi` | `return 2` |
+|---|---|---|
+| 脚本继续 | ✓ 继续执行 | ✗ 终止脚本 |
+| 使用场景 | 中间步骤需要 AI | 整个任务交给 AI |
+| 返回变量 | `$kimi_result` | 无（脚本已退出）|
+
+---
+
+## 子代理与命令行集成
+
+### 内容生成 → 粘贴
+
+```cua
+# 子代理写文章，直接粘贴到目标
+draft "write a formal business email" "professional"
+launch notepad
+wait 1.5
+type $draft_result
+
+# 命令行输出 → 粘贴
+shell "dir E:\project /b"
+type $shell_result
+```
+
+### 人工协助
+
+```cua
+# 遇到登录页面
+ask "请手动登录微信后按回车"
+wait 2
+
+# 检查是否登录成功
+if see main-panel
+    return 0 logged in
+endif
+```
+
+### 全自动化工作流
+
+```cua
+# 1. 用命令行准备环境
+shell "mkdir E:\report" cwd="E:\"
+shell "pip install pandas" timeout=60
+
+# 2. 子代理生成报告
+draft "write a project status report with 3 sections: progress, risks, next steps" "project manager"
+
+# 3. 打开Word粘贴
+launch Microsoft Word
+wait 3
+type $draft_result
+
+# 4. 让K3帮忙排版
+kimi "format the document: set title to Heading 1, section titles to Heading 2" steps=8
+
+# 5. 保存
+keys ctrl+s
+wait 1
+type "E:\report\status.docx"
+keys enter
+
+return 0 report generated and saved
 ```
 
 ---

@@ -50,6 +50,7 @@ from cua.tools.utility import (
     NOTE_SCHEMA, execute_note,
 )
 from cua.tools.human import HUMAN_HELP_SCHEMA, execute_human_help
+from cua.tools.shell import SHELL_SCHEMA, execute_shell
 from cua.subagents.draft_content import DRAFT_CONTENT_SCHEMA, execute_draft_content
 from cua.subagents.image_gen import GENERATE_IMAGE_SCHEMA, execute_generate_image
 from cua.tools.document import (
@@ -112,6 +113,7 @@ TOOLS = [
     DELETE_DOCUMENT_SCHEMA,
     CLEANUP_DOCUMENTS_SCHEMA,
     HUMAN_HELP_SCHEMA,
+    SHELL_SCHEMA,
     FINISH_SCHEMA,
 ]
 
@@ -277,6 +279,13 @@ def execute_tool(
 
     elif name == "run_command":
         return execute_run_command(args["command"])
+
+    elif name == "shell":
+        return execute_shell(
+            args["command"],
+            timeout=args.get("timeout", 30),
+            cwd=args.get("cwd"),
+        )
 
     elif name == "wait":
         return execute_wait(args["seconds"])

@@ -83,7 +83,8 @@ cli.py          → Interactive CLI with --record/--replay/--script flags
 agent.py        → Core agent loop: Kimi K3 tool-calling cycle + prompt management
 recorder.py     → Element recording (PNG+dHash+embedding+OCR) + macro storage
 fast_replay.py  → Fast replay engine (L0 pixel/L1 embedding/L2 K3) + self-healing
-script_runner.py→ .cua script engine with variables, branches, perception, return codes
+script_runner.py→ .cua script engine with variables, branches, perception, return codes,
+                  and K3 handoff (kimi command) for mid-script AI delegation
 element_manager.py→ Standalone UI element management (add/list/preview/rename/delete)
 macro_editor.py → Macro recording/playback with step confirmation
 overlay.py      → Draws virtual mouse cursor (red crosshair + circle) on screenshots
@@ -91,7 +92,7 @@ config.py       → YAML config loader with env var fallback
 learning.py     → Four-layer learning: AutoSkill (ChromaDB), Reflection, Pending, Knowledge base
 replay.py       → Trajectory recording and replay with step verification
 tools/
-  __init__.py   → Tool registry: 47 tool schemas + execute_tool() dispatcher
+  __init__.py   → Tool registry: 48 tool schemas + execute_tool() dispatcher
   screenshot.py → mss full-screen capture → tiered downscale → PNG base64 + OCR
   mouse.py      → set_mouse, click, drag, scroll (normalized coords)
   keyboard.py   → type_keys (shortcuts only) — paste_text handles text input
@@ -101,10 +102,11 @@ tools/
   think.py      → Reflection prompt injection for agent reasoning pauses
   finish.py     → Task completion — ends agent loop
   web.py        → Playwright browser automation (14 tools)
-  uia.py        → Windows UI Automation (5 tools)
+  uia.py        → Windows UI Automation + run_command (Win+R) (5 tools)
+  shell.py      → Subprocess shell execution with stdout/stderr capture
   windows.py    → Window management (list/focus/launch)
   utility.py    → wait, file_read, file_write, note
-  human.py      → request_human_help
+  human.py      → request_human_help (blocking user input)
   document.py   → Kimi Files API (upload/extract/delete)
   kimi_memory.py→ Remote persistent KV storage + rethink consolidation
   loader.py     → Tool group definitions (reference) + ChromaDB similarity search
@@ -120,10 +122,13 @@ knowledge/
 - **K3 always thinking**: K3 always produces reasoning. `reasoning_effort="max"` is default. Assistant messages must preserve `reasoning_content` field.
 - **Tiered PNG screenshots**: mss captures BGRA → numpy → downscale by resolution tier (≤2K keep, 4K→2K, 4K+→4K) → PIL LANCZOS → PNG base64. OCR runs on full-resolution image.
 - **Normalized coordinates**: All mouse positions use [0,1] range with 4 decimal places; conversion to pixels happens in tool layer
-- **Native tool selection**: All 47 tools sent to K3 on every request (no LLM classification). K3's 1M context + auto-caching makes this efficient.
+- **Native tool selection**: All 48 tools sent to K3 on every request (no LLM classification). K3's 1M context + auto-caching makes this efficient.
 - **Verify + Think after every action**: State-changing actions trigger BEFORE/AFTER screenshot comparison + analyst review + think() reflection prompt injection
 - **Prompt architecture**: SYSTEM_PROMPT in agent.py defines tool usage guidance and critical rules. THINK_PROMPT in think.py structures reflection. OCR/verify prompts are inline in agent.py. Learning prompts in learning.py.
 - **No context between rounds**: Each CLI task builds a fresh `messages` list (learning system persists via SQLite + ChromaDB)
 - **Tool ordering matters**: The agent is single-threaded; tool calls execute sequentially within each API response
 - **Record & Replay system**: Elements are pure visual widgets (image + dHash + embedding + ROI). Macros are recorded step sequences. Scripts are text DSL with logic. Three execution tiers: L0 OpenCV pixel match (<10ms), L1 MiniLM embedding match (~100ms), L2 K3 Agent fallback (~5s).
+- **K3 Script Decision Engine**: In `--replay` mode, K3 reviews top 3 matching scripts (full content shown) and can: exec an existing script, create a new one (with auto-validation + self-healing), or fallback to normal agent mode. Scripts referencing missing elements are flagged as doomed.
+- **Script Engine Commands**: .cua scripts support `shell` (subprocess), `ask` (human help), `draft`/`genimg` (subagents), `kimi` (mid-script K3 handoff with `$result_variable` capture), plus control flow: if/else/endif, while, retry, try/catch, goto/label.
 - **Embedding model**: Multilingual MiniLM-L12 (zh+en, 384-dim) preferred, falls back to ONNX MiniLM-L6 (English only, offline). Model loaded lazily, cached globally.
+- **Task timing**: Each task report includes elapsed time (excluding human wait time from `request_human_help`).

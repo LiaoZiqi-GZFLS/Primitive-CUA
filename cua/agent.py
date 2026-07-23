@@ -102,6 +102,7 @@ SYSTEM_PROMPT = """You are a Computer Use Agent (CUA) controlling a Windows desk
 - **uia_set_value(name, value)**: Set value of input control by name. Supports Chinese.
 - **uia_get_text(name)**: Read text/value from a control by name.
 - **run_command(command)**: Win+R → type command → Enter. For paths, executables, shell commands.
+- **shell(command, timeout?, cwd?)**: Execute a shell command via subprocess and capture stdout/stderr. Use for scripting, file ops (dir/ls, copy, mkdir), system info (tasklist, ipconfig), pip install, git, etc. Timeout defaults to 30s (max 120s). Output truncated at 8000 chars. Prefer this over run_command when you need to see the output.
 
 ### Files & Documents
 - **file_read(path)**: Read text file. Use instead of GUI to check file content.
@@ -466,6 +467,8 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
     token_usage = {"prompt": 0, "completion": 0, "total": 0}
     _compressed_up_to = 0   # how many action-rounds have been compressed so far
     _total_action_count = 0  # cumulative count, never decremented by cleanup
+    _start_time = time.time()
+    _human_wait_sec = 0.0
 
     from cua.tools.utility import clear_notes
     clear_notes()
@@ -507,6 +510,8 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                     "summary": f"Task completed via replay ({_replay_result['steps_done']} steps replayed).",
                     "steps": _replay_result.get("tool_log", []),
                     "tokens": token_usage,
+                    "elapsed": time.time() - _start_time,
+                    "human_wait": 0.0,
                     "_tool_calls_log": _replay_result.get("tool_log", []),
                 }
             else:
@@ -666,9 +671,14 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                         pyautogui.moveTo(px, py)
     
                     try:
+                        # Measure human wait time separately
+                        if name == "request_human_help":
+                            t_before = time.time()
                         result = execute_tool(
                             name, args, sct, mouse_pos, screen_w, screen_h, img
                         )
+                        if name == "request_human_help":
+                            _human_wait_sec += time.time() - t_before
                     except Exception as e:
                         print(f"  Tool error: {e}")
                         result = {
@@ -721,6 +731,8 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                     if name == "finish" and "_finish_report" in result:
                         result["_finish_report"]["tokens"] = token_usage
                         result["_finish_report"]["_tool_calls_log"] = _current_tool_log
+                        result["_finish_report"]["elapsed"] = time.time() - _start_time - _human_wait_sec
+                        result["_finish_report"]["human_wait"] = _human_wait_sec
     
                         # Save trajectory for future replay
                         success = result["_finish_report"].get("success", False)
