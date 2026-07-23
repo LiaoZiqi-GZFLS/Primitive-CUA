@@ -527,7 +527,6 @@ class ScriptEngine:
     def _do_retry(self, ip: int, n: int):
         """Execute body up to N times, stop on first success."""
         end_ip = self._skip_to(ip, "endretry")
-        best_step = self._step_count
         self._step_count += 1
         print(f"  [retry] up to {n} times...")
         for attempt in range(n):
@@ -552,6 +551,7 @@ class ScriptEngine:
         catch_ip = self._skip_to(ip, "catch")
         end_ip = self._skip_to(ip, "endtry")
         self._step_count += 1
+        self._in_try = True
         try:
             body_ip = ip + 1
             while body_ip < catch_ip:
@@ -562,6 +562,7 @@ class ScriptEngine:
                 body_ip += 1
         except Exception as e:
             print(f"  [try] caught: {e}")
+            self._in_try = False
             # Execute catch block
             body_ip = catch_ip + 1
             while body_ip < end_ip:
@@ -573,6 +574,8 @@ class ScriptEngine:
                 try: self._do_action(inst)
                 except: pass
                 body_ip += 1
+        else:
+            self._in_try = False
 
     def _do_input(self, inst):
         """Read user input into a variable."""
@@ -626,6 +629,8 @@ class ScriptEngine:
                 print(f"  OK {cmd} {' '.join(args)[:60]}")
             except Exception as e:
                 print(f"  FAIL {cmd}: {e}")
+                if getattr(self, "_in_try", False):
+                    raise
 
     # ── Actions ──
 
