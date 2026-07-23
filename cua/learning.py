@@ -16,8 +16,8 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
 DB_PATH = DATA_DIR / "memory.db"
-SKILLS_DIR = Path(__file__).parent / "skills" / "learned"
-KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
+SKILLS_DIR = Path(__file__).parent / "data" / "skills"
+KNOWLEDGE_DIR = Path(__file__).parent / "data" / "knowledge"
 
 # Settlement retry counter
 _settle_retries: dict[int, int] = {}
@@ -172,11 +172,24 @@ def _get_skills_collection():
         _ensure_dirs()
         _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
         ef = _get_embedding_function()
-        _skills_collection = _chroma_client.get_or_create_collection(
-            name="cua_skills_v2",
-            embedding_function=ef,
-            metadata={"hnsw:space": "cosine"},
-        )
+        try:
+            _skills_collection = _chroma_client.get_or_create_collection(
+                name="cua_skills_v2",
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"},
+            )
+        except Exception:
+            # EF mismatch — delete old collection and recreate
+            try:
+                _chroma_client.delete_collection("cua_skills_v2")
+            except Exception:
+                pass
+            _skills_collection = _chroma_client.create_collection(
+                name="cua_skills_v2",
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"},
+            )
+            print("  [skills] collection recreated with current embedding function")
     return _skills_collection
 
 
@@ -218,12 +231,61 @@ def _get_knowledge_collection():
         if _chroma_client is None:
             _chroma_client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
         ef = _get_embedding_function()
-        _knowledge_collection = _chroma_client.get_or_create_collection(
-            name="cua_knowledge_v2",
-            embedding_function=ef,
-            metadata={"hnsw:space": "cosine"},
-        )
+        try:
+            _knowledge_collection = _chroma_client.get_or_create_collection(
+                name="cua_knowledge_v2",
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"},
+            )
+        except Exception:
+            try:
+                _chroma_client.delete_collection("cua_knowledge_v2")
+            except Exception:
+                pass
+            _knowledge_collection = _chroma_client.create_collection(
+                name="cua_knowledge_v2",
+                embedding_function=ef,
+                metadata={"hnsw:space": "cosine"},
+            )
+            print("  [knowledge] collection recreated with current embedding function")
     return _knowledge_collection
+
+
+def index_skills() -> int:
+    """Index all .md files in the skills/learned directory into ChromaDB.
+
+    Returns number of newly indexed files.
+    """
+    if not SKILLS_DIR.exists():
+        return 0
+
+    files = list(SKILLS_DIR.glob("*.md"))
+    if not files:
+        return 0
+
+    new_count = 0
+    try:
+        col = _get_skills_collection()
+        indexed = set(col.get()["ids"]) if col.count() > 0 else set()
+
+        for f in files:
+            name = f.stem
+            if name in indexed:
+                continue
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+                doc = content[:500]
+                col.add(ids=[name], documents=[doc])
+                print(f"  [skills] indexed: {name}")
+                new_count += 1
+            except Exception:
+                pass
+        if new_count == 0:
+            print(f"  [skills] {len(files)} files (all previously indexed)")
+    except Exception:
+        pass
+    return new_count
 
 
 def index_knowledge() -> int:
@@ -302,6 +364,7 @@ def _cfg(key: str, default=None):
 def _ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_db() -> sqlite3.Connection:

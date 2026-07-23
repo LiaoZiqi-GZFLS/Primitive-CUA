@@ -107,39 +107,92 @@ def main():
 
 
 def _repair_indices(config: dict):
-    """Rebuild all vector indices — script index, ChromaDB collections."""
+    """Rebuild all vector indices — re-embed with current embedding function."""
     import shutil
     from pathlib import Path
 
     print("Repairing vector indices...\n")
 
-    # 1. Delete script index cache
+    # 1. Delete script index cache (safe — rebuilt from .cua files)
     idx_path = Path("cua/data/scripts/_index.json")
     if idx_path.exists():
         idx_path.unlink()
         print("  [OK] Deleted script index cache")
 
-    # 2. Delete ChromaDB data
-    chroma_dir = Path("cua/data/chroma")
-    if chroma_dir.exists():
-        shutil.rmtree(chroma_dir)
-        print("  [OK] Deleted ChromaDB embeddings")
-
-    # 3. Rebuild script index
+    # 2. Rebuild script index
     print("\nRebuilding script index...")
     from cua.recorder import _embed_text
     idx = _get_script_index()
     print(f"  [OK] Indexed {len(idx)} scripts")
 
-    # 4. Rebuild ChromaDB collections
-    print("\nRebuilding ChromaDB...")
-    from cua.learning import _get_skills_collection, index_knowledge, _get_knowledge_collection
-    _get_skills_collection()
+    # 3. Rebuild ChromaDB collections — preserve documents, re-embed
+    print("\nRebuilding ChromaDB collections (preserving data)...")
+    from cua.learning import _get_embedding_function
+    ef = _get_embedding_function()
+    _rebuild_chroma_collection("cua_skills_v2", ef)
+    _rebuild_chroma_collection("cua_knowledge_v2", ef)
+
+    # Re-index knowledge base and skills from .md files
+    from cua.learning import index_knowledge, _get_knowledge_collection, index_skills
     _get_knowledge_collection()
     n = index_knowledge()
     print(f"  [OK] Knowledge base indexed: {n} files")
+    n2 = index_skills()
+    print(f"  [OK] Skills indexed: {n2} files")
 
     print("\nAll vector indices rebuilt with multilingual embeddings.")
+
+
+def _rebuild_chroma_collection(name: str, ef):
+    """Re-embed an existing ChromaDB collection with a new embedding function.
+
+    Reads all existing documents, deletes the old collection, recreates
+    with the new embedding function, and re-adds documents.
+    """
+    import chromadb
+    from pathlib import Path
+
+    chroma_dir = Path("cua/data/chroma")
+
+    try:
+        old_client = chromadb.PersistentClient(path=str(chroma_dir))
+    except Exception:
+        return
+
+    try:
+        old_col = old_client.get_collection(name)
+    except Exception:
+        return
+
+    count = old_col.count()
+    if count == 0:
+        return
+
+    # Read all existing documents
+    data = old_col.get()
+    ids = data["ids"]
+    docs = data.get("documents") or [""] * len(ids)
+    metas = data.get("metadatas") or [None] * len(ids)
+
+    # Delete old collection
+    old_client.delete_collection(name)
+    print(f"  [OK] Deleted old '{name}' collection ({count} entries)")
+
+    # Recreate with new embedding function
+    new_col = old_client.create_collection(
+        name=name, embedding_function=ef,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    # Re-add in batches (ChromaDB has limits)
+    batch = 100
+    for i in range(0, len(ids), batch):
+        new_col.add(
+            ids=ids[i:i+batch],
+            documents=docs[i:i+batch],
+            metadatas=metas[i:i+batch],
+        )
+    print(f"  [OK] Recreated '{name}' with {len(ids)} entries re-embedded")
 
 
 def _run_script(task: str, config: dict, client, model: str):

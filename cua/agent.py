@@ -11,7 +11,7 @@ from cua.config import load_config
 from cua.tools import ALL_TOOLS, execute_tool
 from cua.tools.loader import _search_similar
 from cua.tools.screenshot import _np_to_png_b64, downsample_for_vlm
-from cua.learning import get_learnings_prompt, index_knowledge
+from cua.learning import get_learnings_prompt, index_knowledge, index_skills
 
 # Module-level tool log for Ctrl+C recovery
 _current_tool_log: list[str] = []
@@ -438,10 +438,13 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
     # Create OpenAI-compatible client
     client = OpenAI(api_key=api_key, base_url=base_url)
 
-    # Index knowledge base on startup
-    n_indexed = index_knowledge()
-    if n_indexed > 0:
-        print(f"  [knowledge] indexed {n_indexed} new file(s)")
+    # Index knowledge base and skills on startup
+    n_knowledge = index_knowledge()
+    if n_knowledge > 0:
+        print(f"  [knowledge] indexed {n_knowledge} new file(s)")
+    n_skills = index_skills()
+    if n_skills > 0:
+        print(f"  [skills] indexed {n_skills} new skill(s)")
 
     # K3: 1M context + auto-caching — always send all tools, no classification needed.
     # The model handles tool selection natively.

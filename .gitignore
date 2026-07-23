@@ -1,8 +1,14 @@
 # CUA config (contains API key)
 cua/config.yaml
 
-# CUA runtime data (SQLite, ChromaDB, cache)
-cua/data/
+# CUA runtime data (SQLite, ChromaDB, cache, scripts, templates, macros)
+cua/data/cache/
+cua/data/chroma/
+cua/data/memory.db
+cua/data/macros/
+cua/data/scripts/
+cua/data/templates/
+cua/data/trajectories/
 
 # UIA test output
 uia_before.txt

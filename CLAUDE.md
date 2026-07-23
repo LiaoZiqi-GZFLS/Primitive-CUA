@@ -64,6 +64,9 @@ python cua/cli.py --replay "微信搜索"
 # Execute a .cua automation script
 python cua/cli.py --script path/to/script.cua
 
+# Rebuild all vector indices (after model switch or corruption)
+python cua/cli.py --repair
+
 # Script validation only (no execution)
 python cua/script_runner.py script.cua --check
 ```
@@ -73,7 +76,11 @@ Environment variable required: `MOONSHOT_API_KEY`.
 ### Run Tests
 
 ```bash
-python cua/test_overlay.py
+# Search across all vector indices for a task
+python cua/test/search_task.py "your task description" --top 5
+
+# Overlay drawing test
+python cua/test/test_overlay.py
 ```
 
 ### Architecture
@@ -113,8 +120,18 @@ tools/
 subagents/
   draft_content.py → Isolated content writing with persona
   image_gen.py     → Multi-round SVG generation with visual self-review
-knowledge/
-  *.md          → Manual knowledge base files (ChromaDB-indexed on startup)
+test/
+  search_task.py  → Search across all vector indices for a given task
+  test_overlay.py → Overlay drawing verification
+data/              → All persistent data (gitignored except knowledge/skills)
+  knowledge/*.md   → Manual knowledge base (ChromaDB-indexed on startup)
+  skills/*.md      → Learned autoskills (ChromaDB-indexed on startup)
+  scripts/*.cua    → Automation scripts + _index.json embedding cache
+  templates/       → Element images (PNG) + metadata (JSON)
+  macros/*.json    → Recorded macro step sequences
+  chroma/          → ChromaDB persistent vector storage
+  memory.db        → SQLite learning memory (pending/reflections)
+  trajectories/    → Replay trajectory data
 ```
 
 ### Key Design Decisions
@@ -130,5 +147,7 @@ knowledge/
 - **Record & Replay system**: Elements are pure visual widgets (image + dHash + embedding + ROI). Macros are recorded step sequences. Scripts are text DSL with logic. Three execution tiers: L0 OpenCV pixel match (<10ms), L1 MiniLM embedding match (~100ms), L2 K3 Agent fallback (~5s).
 - **K3 Script Decision Engine**: In `--replay` mode, K3 reviews top 3 matching scripts (full content shown) and can: exec an existing script, create a new one (with auto-validation + self-healing), or fallback to normal agent mode. Scripts referencing missing elements are flagged as doomed.
 - **Script Engine Commands**: .cua scripts support `shell` (subprocess), `ask` (human help), `draft`/`genimg` (subagents), `kimi` (mid-script K3 handoff), 12 web commands (navigate, web_click, web_type, web_press, web_scroll, web_content, tab management, etc.) with `if web`/`if url` conditions, plus control flow: if/else/endif, while, retry, try/catch, goto/label.
-- **Embedding model**: Multilingual MiniLM-L12 (zh+en, 384-dim) preferred, falls back to ONNX MiniLM-L6 (English only, offline). Model loaded lazily, cached globally.
+- **Embedding model**: Multilingual MiniLM-L12 (zh+en, 384-dim) loaded via `transformers` (AutoTokenizer + AutoModel) with `local_files_only=True` for true offline operation. Falls back to ONNX MiniLM-L6 (English only) if torch/transformers unavailable. Vector index repair via `--repair`.
 - **Task timing**: Each task report includes elapsed time (excluding human wait time from `request_human_help`).
+- **Unified data directory**: All persistent data under `cua/data/` — knowledge, skills, scripts, templates, macros, chroma, memory.db, trajectories. Only knowledge/ and skills/ are tracked in git; the rest is runtime-generated.
+- **ChromaDB 1.5.x interface**: Custom `_MultilingualEF` class implements `__call__`, `embed_query`, `embed_documents`, `name` — required by ChromaDB 1.5+ embedding function protocol.
