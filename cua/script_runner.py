@@ -283,7 +283,7 @@ class ScriptEngine:
             "ocr_result": "",
             "last_result": "",
         }
-        self.labels = {}
+        # Labels are registered during _parse() — don't clear them
 
     def _parse(self, raw: str) -> list[dict]:
         raw = self._expand_repeat(raw)
@@ -401,18 +401,24 @@ class ScriptEngine:
             if cmd == "if":
                 ip = self._do_if(inst, ip, if_stack)
             elif cmd == "while":
+                cond = self._while_cond(inst)
+                print(f"  [while] → {cond}")
                 while_stack.append((ip, inst["indent"], 0))
-                ip = ip + 1 if self._while_cond(inst) else self._skip_to(ip, "endwhile") + 1
+                ip = ip + 1 if cond else self._skip_to(ip, "endwhile") + 1
             elif cmd == "retry":
                 n = int(inst["args"][0]) if inst["args"] else 3
+                print(f"  [retry] {n}x")
                 self._do_retry(ip, n); ip = self._skip_to(ip, "endretry") + 1
             elif cmd == "try":
+                print(f"  [try]")
                 self._do_try(ip); ip = self._skip_to(ip, "endtry") + 1
             elif cmd == "input":
                 self._do_input(inst); ip += 1
             elif cmd == "goto":
-                ip = self._do_goto(inst)
+                print(f"  → goto {' '.join(inst['args'])}")
+                ip = self._do_goto(inst, if_stack, while_stack)
             elif cmd == "label":
+                print(f"  [{':'.join(inst['args'])}]")
                 ip += 1
             elif cmd == "return":
                 return self._do_return(inst)
@@ -427,6 +433,7 @@ class ScriptEngine:
             elif cmd == "wait_until":
                 self._do_wait_until(inst); ip += 1
             elif cmd == "fail":
+                print(f"  FAIL: {' '.join(inst['args'])}")
                 return self._do_fail(inst)
             else:
                 self._do_action(inst); ip += 1
@@ -468,13 +475,23 @@ class ScriptEngine:
         if negate:
             result = not result
         if_stack.append((ip, inst["indent"], result))
-        if self.debug:
-            print(f"  [if] {'not ' if negate else ''}{cond}('{prompt[:50]}') → {result}")
+        print(f"  [if] {'not ' if negate else ''}{cond} → {result}")
         return ip + 1
 
-    def _do_goto(self, inst) -> int:
+    def _do_goto(self, inst, if_stack, while_stack) -> int:
+        """Jump to label, clearing block stacks that we leave behind."""
         label = inst["args"][0] if inst["args"] else ""
-        return self.labels.get(label, self._lines.index(inst) + 1)
+        target = self.labels.get(label)
+        if target is None:
+            print(f"  [script] label '{label}' not found — continuing")
+            return self._lines.index(inst) + 1
+
+        # Clear block stacks when jumping to a different indent level
+        target_indent = self._lines[target]["indent"]
+        if_stack[:] = [e for e in if_stack if e[1] <= target_indent]
+        while_stack.clear()  # Can't know loop state after jump
+
+        return target
 
     def _do_return(self, inst) -> ScriptResult:
         args = self._xa(inst["args"])
@@ -640,7 +657,7 @@ class ScriptEngine:
         if pt:
             import pyautogui; pyautogui.click(pt[0], pt[1]); time.sleep(0.3)
         else:
-            print(f"  click: element '{t}' not found")
+            raise RuntimeError(f"element '{t}' not found after retries")
 
     def _act_dblclick(self, args):
         t = " ".join(args)
@@ -648,7 +665,7 @@ class ScriptEngine:
         if pt:
             import pyautogui; pyautogui.doubleClick(pt[0], pt[1]); time.sleep(0.3)
         else:
-            print(f"  dblclick: element '{t}' not found")
+            raise RuntimeError(f"element '{t}' not found after retries")
 
     def _act_uia_click(self, args):
         from cua.tools.uia import execute_uia_click
@@ -831,28 +848,28 @@ class ScriptEngine:
                 import cv2, mss
                 tm_bgr = cv2.imread(path)
                 if tm_bgr is not None:
-                    try:
-                        with mss.MSS() as sct:
-                            img = np.array(sct.grab(sct.monitors[1]))[...,:3]
-                        from cua.fast_replay import _template_match
-                        # If window found: search full window area (icon may have moved)
-                        if win_ox > -30000 and win_oy > -30000:
-                            win_w = best_t.get("window", {}).get("rect", [0,0,1920,1080])[2]
-                            win_h = best_t.get("window", {}).get("rect", [0,0,1920,1080])[3]
-                            roi_rect = (win_ox, win_oy, min(win_w, 1920), min(win_h, 1080))
-                        else:
-                            # No window: search around last known position
-                            roi_rect = (screen_x - max(roi.get("w",20)*5, 200),
-                                        screen_y - max(roi.get("h",10)*5, 200),
-                                        max(roi.get("w",20)*11, 500),
-                                        max(roi.get("h",10)*11, 500))
-                        pt, sc = _template_match(img, tm_bgr, roi_rect)
-                        if pt and sc > 0.65:
-                            return pt
-                    except Exception:
-                        pass  # Screenshot failed — fall through to click_px
-            # Fallback: use best available coordinates
-            return (screen_x, screen_y)
+                    from cua.fast_replay import _template_match
+                    for _retry in range(3):
+                        try:
+                            with mss.MSS() as sct:
+                                img = np.array(sct.grab(sct.monitors[1]))[...,:3]
+                            if win_ox > -30000 and win_oy > -30000:
+                                win_w = best_t.get("window", {}).get("rect", [0,0,1920,1080])[2]
+                                win_h = best_t.get("window", {}).get("rect", [0,0,1920,1080])[3]
+                                roi_rect = (win_ox, win_oy, min(win_w, 1920), min(win_h, 1080))
+                            else:
+                                roi_rect = (screen_x - max(roi.get("w",20)*5, 200),
+                                            screen_y - max(roi.get("h",10)*5, 200),
+                                            max(roi.get("w",20)*11, 500),
+                                            max(roi.get("h",10)*11, 500))
+                            pt, sc = _template_match(img, tm_bgr, roi_rect)
+                            if pt and sc > 0.65:
+                                return pt
+                        except Exception:
+                            pass
+                        if _retry < 2:
+                            time.sleep([1, 2][_retry])  # exponential backoff
+            return None  # All retries failed
         return None
 
     def _check_template(self, t): return self._find_template(t) is not None

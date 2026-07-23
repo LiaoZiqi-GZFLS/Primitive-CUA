@@ -126,7 +126,8 @@ def _run_replay(task: str, config: dict):
         import numpy as np
         from pathlib import Path
         script_dir = Path("cua/data/scripts")
-        scripts = list(script_dir.glob("*.cua")) if script_dir.exists() else []
+        scripts = [s for s in script_dir.glob("*.cua")
+                   if not s.name.startswith("example_")] if script_dir.exists() else []
 
         if scripts:
             task_vec = _embed_text(task[:200])

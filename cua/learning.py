@@ -69,15 +69,16 @@ def _get_embedding_function():
         try:
             from sentence_transformers import SentenceTransformer
             import os as _os
-            _prev = _os.environ.get("TRANSFORMERS_OFFLINE", "")
+            _prev_hf = _os.environ.get("HF_HUB_OFFLINE", "")
+            _prev_tr = _os.environ.get("TRANSFORMERS_OFFLINE", "")
+            _os.environ["HF_HUB_OFFLINE"] = "1"
             _os.environ["TRANSFORMERS_OFFLINE"] = "1"
             st = SentenceTransformer(
                 "paraphrase-multilingual-MiniLM-L12-v2", device="cpu"
             )
-            if _prev:
-                _os.environ["TRANSFORMERS_OFFLINE"] = _prev
-            else:
-                del _os.environ["TRANSFORMERS_OFFLINE"]
+            for k, v in [("HF_HUB_OFFLINE", _prev_hf), ("TRANSFORMERS_OFFLINE", _prev_tr)]:
+                if v: _os.environ[k] = v
+                else: _os.environ.pop(k, None)
             def _encode(texts):
                 return st.encode(texts, show_progress_bar=False).tolist()
             _ = _encode(["test"])

@@ -294,6 +294,14 @@ def _verify_ocr_text(screenshot_bgr: np.ndarray, click_pt: tuple[int, int],
     """Verify button text at click point matches expected OCR text."""
     if not expected_text.strip():
         return True
+    # Strip hash suffix + try function-name only (微信-顶栏-搜索 → 搜索)
+    if "_" in expected_text:
+        expected_text = expected_text.split("_")[0]
+    if "-" in expected_text:
+        func_text = expected_text.rsplit("-", 1)[-1]
+        # Will try func_text as fallback below
+    else:
+        func_text = expected_text
 
     import cv2
 
@@ -313,7 +321,9 @@ def _verify_ocr_text(screenshot_bgr: np.ndarray, click_pt: tuple[int, int],
             found_text = " ".join(r[1].lower() for r in results
                                    if r[2] and float(r[2]) > 0.5)
             expected_lower = expected_text.lower()
-            return expected_lower in found_text or found_text in expected_lower
+            func_lower = func_text.lower()
+            return (expected_lower in found_text or found_text in expected_lower or
+                    func_lower in found_text or found_text in func_lower)
     except Exception:
         pass
     return False
