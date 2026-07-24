@@ -34,6 +34,8 @@ VERIFY_TOOLS = {
     "web_press", "web_scroll",
     # UIA tools that modify state
     "uia_click", "uia_set_value",
+    # System tools that modify state
+    "shell", "run_command",
 }
 
 # Perception tools — sync physical cursor before executing
@@ -189,9 +191,9 @@ def _heal_orphaned_tool_calls(messages: list):
         ]
         if not orphaned:
             continue
-        for tc in orphaned:
+        # Insert in reverse to maintain order: last orphaned → highest index
+        for tc in reversed(orphaned):
             name = tc.get("function", {}).get("name", "unknown")
-            # Insert after this assistant message
             messages.insert(i + 1, {
                 "role": "tool",
                 "tool_call_id": tc["id"],
@@ -352,9 +354,14 @@ def _cleanup_context(messages: list):
     return action_count
 
 
-def _compress_context(messages: list, client, model: str, max_tokens: int, skip_actions: int = 0):
-    """LLM compression: summarize the next 10 oldest action-rounds into one concise record."""
-    # Find the range of actions to compress: skip_actions to skip_actions+10
+def _compress_context(messages: list, client, model: str, max_tokens: int):
+    """LLM compression: summarize the 10 oldest action-rounds into one concise record.
+
+    Always compresses the FIRST 10 state-changing actions found in the message list.
+    After compression, those actions are removed, so the next call naturally
+    compresses the next batch — no skip_actions tracking needed.
+    """
+    # Find the first 10 state-changing actions
     action_count = 0
     compress_start_idx = -1
     compress_end_idx = -1
@@ -364,9 +371,9 @@ def _compress_context(messages: list, client, model: str, max_tokens: int, skip_
             for tc in msg["tool_calls"]:
                 if tc.get("function", {}).get("name") in VERIFY_TOOLS:
                     action_count += 1
-                    if action_count == skip_actions + 1 and compress_start_idx < 0:
+                    if compress_start_idx < 0:
                         compress_start_idx = i
-                    if action_count == skip_actions + 10:
+                    if action_count == 10:
                         compress_end_idx = i
                         break
         if compress_end_idx >= 0:
@@ -569,13 +576,20 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
         _replay_result = None
         from cua.replay import attempt_replay, find_trajectory
         print(f"  [replay] checking replay viability...")
-        traj = find_trajectory(task[:80])
+        try:
+            traj = find_trajectory(task[:80])
+        except Exception:
+            traj = None
         if traj:
             print(f"  [replay] trajectory found ({len(traj['steps'])} steps), judging...")
-            _replay_result = attempt_replay(
-                traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
-                client, model
-            )
+            try:
+                _replay_result = attempt_replay(
+                    traj, task, similar_text, sct, mouse_pos, screen_w, screen_h,
+                    client, model
+                )
+            except Exception as e:
+                print(f"  [replay] attempt_replay crashed: {e}")
+                _replay_result = {}
             if _replay_result.get("replayed"):
                 return {
                     "success": True,
@@ -804,7 +818,14 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                         except Exception as e:
                             print(f"  [record] capture failed: {e}")
 
-                    if name == "finish" and "_finish_report" in result:
+                    if name == "finish":
+                        if "_finish_report" not in result:
+                            # Safety: construct fallback report
+                            result["_finish_report"] = {
+                                "success": args.get("success", False),
+                                "summary": args.get("summary", "finished"),
+                                "steps": args.get("steps", []),
+                            }
                         result["_finish_report"]["tokens"] = token_usage
                         result["_finish_report"]["_tool_calls_log"] = _current_tool_log
                         result["_finish_report"]["elapsed"] = time.time() - _start_time - _human_wait_sec
@@ -1141,8 +1162,12 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                             })
                         # Every 10 actions beyond 20, compress the oldest 10
                         if _total_action_count >= _compressed_up_to + 20:
-                            _compress_context(messages, client, model, max_tokens, _compressed_up_to)
-                            _compressed_up_to += 10
+                            old_len = len(messages)
+                            _compress_context(messages, client, model, max_tokens)
+                            if len(messages) < old_len:
+                                _compressed_up_to += 10
+                            # If compression failed/skipped, don't increment —
+                            # we'll try again next iteration
     
             # Max iterations reached — ask user whether to continue
             print(f"\n  ⏸  Reached {max_iterations} iterations ({len(_current_tool_log)} tool calls).")
