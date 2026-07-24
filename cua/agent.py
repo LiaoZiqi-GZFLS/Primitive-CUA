@@ -957,7 +957,8 @@ def run_task(task: str, config: dict | None = None, record_mode: bool = False) -
                             # Fork agent context. messages already includes the tool
                             # and user image messages from the screenshot result.
                             clean_messages = list(messages)
-    
+                            _heal_orphaned_tool_calls(clean_messages)
+
                             clean_messages.append({
                                 "role": "user",
                                 "content": [

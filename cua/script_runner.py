@@ -49,6 +49,9 @@ Usage:
   draft task persona          # Subagent DraftContent, output → $draft_result
   genimg requirement          # Subagent GenerateImage, output → $genimg_result
   kimi subtask [steps=N]      # K3 Agent takes over for subtask → $kimi_result
+  name "content"               # K3 suggests filename based on content → $name_result
+  file_read "path"              # Read file contents → $file_result
+  file_write "path" "content"   # Write content to file (creates dirs)
 
   # ── Web ──
   navigate url                # Open URL in built-in browser
@@ -105,8 +108,8 @@ Usage:
 
   # ── Built-in variables ──
   $screen_w / $screen_h   $ocr_result   $shell_result
-  $web_content   $web_tabs
-  $ask_result   $draft_result   $genimg_result   $kimi_result
+  $web_content   $web_tabs   $file_result
+  $ask_result   $draft_result   $genimg_result   $kimi_result   $name_result
   $last_result   $now
 """
 import json
@@ -177,6 +180,7 @@ class ScriptEngine:
         "launch", "wait", "sleep", "scroll", "navigate", "drag",
         "screenshot", "ocr", "move", "set", "print", "input", "exec",
         "shell", "ask", "draft", "genimg", "kimi",
+        "name", "file_read", "file_write",
         "web_type", "web_press", "web_scroll", "web_content",
         "web_new_tab", "web_switch_tab", "web_close_tab", "web_tabs",
         "web_refresh", "web_back", "web_forward",
@@ -193,6 +197,7 @@ class ScriptEngine:
         "goto", "label", "set", "scroll", "navigate", "wait_until",
         "if", "while", "finish", "return", "wait", "sleep", "fail",
         "retry", "input", "shell", "ask", "draft", "genimg", "kimi",
+        "name", "file_read", "file_write",
         "web_type", "web_press", "web_scroll", "web_switch_tab",
     }
 
@@ -350,6 +355,8 @@ class ScriptEngine:
             "draft_result": "",
             "genimg_result": "",
             "kimi_result": "",
+            "name_result": "",
+            "file_result": "",
             "web_content": "",
             "web_tabs": "",
             "last_result": "",
@@ -760,6 +767,9 @@ class ScriptEngine:
             "shell": self._act_shell, "ask": self._act_ask,
             "draft": self._act_draft, "genimg": self._act_genimg,
             "kimi": self._act_kimi,
+            "name": self._act_name,
+            "file_read": self._act_file_read,
+            "file_write": self._act_file_write,
             "web_type": self._act_web_type,
             "web_press": self._act_web_press,
             "web_scroll": self._act_web_scroll,
@@ -1018,7 +1028,12 @@ class ScriptEngine:
         self.vars["last_result"] = self.vars["ask_result"]
 
     def _act_draft(self, args):
-        """Call DraftContent subagent, store output in $draft_result."""
+        """Call DraftContent subagent, store pure content in $draft_result.
+
+        The subagent saves the full draft to a .md file and returns a summary
+        with file path. We read the saved file to get the pure article text.
+        Use $draft_result directly with type to paste.
+        """
         if not args:
             raise RuntimeError("draft requires task and persona")
         task_text = args[0] if len(args) == 1 else " ".join(args[:-1])
@@ -1026,9 +1041,21 @@ class ScriptEngine:
         from cua.subagents.draft_content import execute_draft_content
         print(f"  [draft] generating content...")
         result = execute_draft_content(task_text, persona, max_chars=4000)
-        self.vars["draft_result"] = result["content"][0]["text"]
-        self.vars["last_result"] = self.vars["draft_result"]
-        print(f"  [draft] {len(self.vars['draft_result'])} chars")
+        summary = result["content"][0]["text"]
+
+        # Extract file path from summary and read the full content
+        draft_content = summary  # fallback
+        if "Draft saved: " in summary:
+            try:
+                path_line = summary.split("Draft saved: ")[1].split("\n")[0].strip()
+                with open(path_line, "r", encoding="utf-8") as fh:
+                    draft_content = fh.read()
+            except Exception:
+                pass
+
+        self.vars["draft_result"] = draft_content
+        self.vars["last_result"] = draft_content
+        print(f"  [draft] {len(draft_content)} chars ready")
 
     def _act_genimg(self, args):
         """Call GenerateImage subagent, store output in $genimg_result."""
@@ -1171,6 +1198,62 @@ class ScriptEngine:
             self.vars["kimi_result"] = f"K3 ran out of steps ({max_steps}) for: {subtask[:80]}"
             self.vars["last_result"] = self.vars["kimi_result"]
             print(f"  [kimi] max steps reached — continuing script")
+
+    def _act_name(self, args):
+        """K3 suggests a filename based on content → $name_result."""
+        content = " ".join(args)
+        if not content:
+            raise RuntimeError("name requires content to name")
+        ak = self.config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
+        if not ak:
+            raise RuntimeError("name requires API key")
+        from openai import OpenAI
+        model = self.config.get("model", "kimi-k3")
+        base_url = self.config.get("base_url", "https://api.moonshot.cn/v1")
+        client = OpenAI(api_key=ak, base_url=base_url)
+        try:
+            resp = client.chat.completions.create(
+                model=model, reasoning_effort="low", max_tokens=50,
+                messages=[
+                    {"role": "system", "content": (
+                        "You name files. Output ONLY a short filename (under 40 chars) "
+                        "that summarizes the content. Use Chinese or English as appropriate. "
+                        "No path, no extension, no quotes, no explanation — just the name."
+                    )},
+                    {"role": "user", "content": content[:3000]},
+                ],
+            )
+            name = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
+            # Clean: remove path separators and limit length
+            name = "".join(c for c in name if c not in '\\/:*?"<>|')[:40] or "untitled"
+        except Exception:
+            name = "untitled"
+        self.vars["name_result"] = name
+        self.vars["last_result"] = name
+        print(f"  [name] → {name}")
+
+    def _act_file_read(self, args):
+        """Read file contents → $file_result."""
+        if not args:
+            raise RuntimeError("file_read requires a path")
+        path = self._expand(" ".join(args))
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        self.vars["file_result"] = content
+        self.vars["last_result"] = content
+        print(f"  [file_read] {path} ({len(content)} chars)")
+
+    def _act_file_write(self, args):
+        """Write content to file, creating parent directories."""
+        if len(args) < 2:
+            raise RuntimeError("file_write requires path and content")
+        path = self._expand(args[0])
+        content = " ".join(args[1:])
+        from pathlib import Path
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self._expand(content))
+        print(f"  [file_write] {path} ({len(content)} chars)")
 
     # ── Perception ──
 

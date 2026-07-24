@@ -84,20 +84,20 @@ python cua/script_runner.py script.cua --step
 
 内置变量：
 
-| 变量               | 含义                                | 示例值                   |
-| ------------------ | ----------------------------------- | ------------------------ |
-| `$screen_w`      | 屏幕宽度 (px)                       | `1920`                 |
-| `$screen_h`      | 屏幕高度 (px)                       | `1080`                 |
-| `$ocr_result`    | 最近一次`ocr` 的文本输出          | `"微信 搜索 火眼审阅"` |
-| `$shell_result`  | 最近一次`shell` 的 stdout/stderr  | `"Directory: E:\..."`  |
-| `$ask_result`    | 最近一次`ask` 的人工回复          | `"已完成登录"`         |
-| `$draft_result`  | 最近一次`draft` 生成的文本        | `"尊敬的客户..."`      |
-| `$genimg_result` | 最近一次`genimg` 的结果路径       | `"output/xxx.png"`     |
-| `$kimi_result`   | 最近一次`kimi` 的 K3 摘要         | `"搜索完成，找到3条"`   |
-| `$web_content`   | 最近一次`web_content` 的页面结构  | `"标题: Login\n按钮: Submit..."` |
-| `$web_tabs`      | 最近一次`web_tabs` 的标签列表     | `"[0] Google [1] GitHub"` |
-| `$last_result`   | 最近一次命令的输出                  | 任意命令的输出           |
-| `$now`           | 当前时间戳 (ms)                     | `1700000000000`        |
+| 变量               | 含义                               | 示例值                             |
+| ------------------ | ---------------------------------- | ---------------------------------- |
+| `$screen_w`      | 屏幕宽度 (px)                      | `1920`                           |
+| `$screen_h`      | 屏幕高度 (px)                      | `1080`                           |
+| `$ocr_result`    | 最近一次`ocr` 的文本输出         | `"微信 搜索 火眼审阅"`           |
+| `$shell_result`  | 最近一次`shell` 的 stdout/stderr | `"Directory: E:\..."`            |
+| `$ask_result`    | 最近一次`ask` 的人工回复         | `"已完成登录"`                   |
+| `$draft_result`  | 最近一次`draft` 生成的文本       | `"尊敬的客户..."`                |
+| `$genimg_result` | 最近一次`genimg` 的结果路径      | `"output/xxx.png"`               |
+| `$kimi_result`   | 最近一次`kimi` 的 K3 摘要        | `"搜索完成，找到3条"`            |
+| `$web_content`   | 最近一次`web_content` 的页面结构 | `"标题: Login\n按钮: Submit..."` |
+| `$web_tabs`      | 最近一次`web_tabs` 的标签列表    | `"[0] Google [1] GitHub"`        |
+| `$last_result`   | 最近一次命令的输出                 | 任意命令的输出                     |
+| `$now`           | 当前时间戳 (ms)                    | `1700000000000`                  |
 
 ---
 
@@ -195,7 +195,7 @@ return [code] [summary]   退出脚本（code: 0/1/2）
 | `ocr`    | `if ocr text`          | 屏幕 OCR 文字匹配   | 否     |
 | `window` | `if window title_part` | 枚举所有可见窗口    | 否     |
 | `url`    | `if url url_part`      | 浏览器当前 URL      | 否     |
-| `web`    | `if web text`          | 网页内容文字匹配      | 否     |
+| `web`    | `if web text`          | 网页内容文字匹配    | 否     |
 
 ### 块语法规则
 
@@ -381,17 +381,19 @@ endtry
 ```
 
 **工作原理**：
+
 1. 截取当前屏幕 → 发送给 K3
 2. K3 使用全套工具（点击、输入、OCR 等）执行子任务
 3. K3 调用 `finish()` → 摘要写入 `$kimi_result`
 4. 脚本继续执行后续命令
 
 **与 `return 2` 的区别**：
-| | `kimi` | `return 2` |
-|---|---|---|
-| 脚本继续 | ✓ 继续执行 | ✗ 终止脚本 |
-| 使用场景 | 中间步骤需要 AI | 整个任务交给 AI |
-| 返回变量 | `$kimi_result` | 无（脚本已退出）|
+
+|          | `kimi`         | `return 2`     |
+| -------- | ---------------- | ---------------- |
+| 脚本继续 | ✓ 继续执行      | ✗ 终止脚本      |
+| 使用场景 | 中间步骤需要 AI  | 整个任务交给 AI  |
+| 返回变量 | `$kimi_result` | 无（脚本已退出） |
 
 ---
 

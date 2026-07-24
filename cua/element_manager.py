@@ -78,9 +78,20 @@ def cmd_list():
     if not elements:
         print("No elements found.")
         return
-    print(f"{'OCR Text':<30s} {'File':<35s} {'ROI':<15s} Img")
+
+    # Parse flags
+    limit = None
+    for a in sys.argv:
+        if a.startswith("--limit="):
+            try: limit = int(a.split("=", 1)[1])
+            except: pass
+
+    if limit:
+        elements = elements[-limit:]
+
+    print(f"{'OCR Text':<30s} {'File':<35s} {'ROI':<15s} Img  ({len(elements)})")
     print("-" * 100)
-    for e in elements[-30:]:
+    for e in elements:
         text = e.get("ocr_text", e.get("template_id", "?"))[:28]
         fname = Path(e.get("_file", "")).stem[:33]
         roi = e.get("roi", {})
@@ -326,6 +337,181 @@ def cmd_edit(name: str):
             except: pass
     # Re-add
     cmd_add(name)
+
+
+def cmd_repair():
+    """Use K3 vision to add descriptions to unnamed/low-quality elements."""
+    import base64
+    from openai import OpenAI
+    from cua.config import load_config
+
+    config = load_config()
+    api_key = config.get("moonshot_api_key", "") or os.environ.get("MOONSHOT_API_KEY", "")
+    if not api_key:
+        print("API key not configured.")
+        return
+    model = config.get("model", "kimi-k3")
+    base_url = config.get("base_url", "https://api.moonshot.cn/v1")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
+    elements = _load_all()
+
+    # Phase 0: deduplicate named elements — add hash suffix to duplicates
+    seen: dict[str, int] = {}
+    deduped = 0
+    for el in elements:
+        name = el.get("ocr_text", "").strip()
+        if not name or name.startswith("_"):
+            continue
+        if name in seen:
+            dh = el.get("dhash", "0000")[:4]
+            new_name = f"{name}_{dh}"
+            meta_path = el.get("_file", "")
+            if meta_path and os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    data["ocr_text"] = new_name
+                    with open(meta_path, "w", encoding="utf-8") as fh:
+                        json.dump(data, fh, ensure_ascii=False, indent=2)
+                    print(f"  [dedup] '{name}' → '{new_name}'")
+                    deduped += 1
+                except Exception:
+                    pass
+        else:
+            seen[name] = 1
+    if deduped:
+        print(f"Deduplicated {deduped} duplicate name(s).\n")
+        elements = _load_all()  # reload
+
+    # Find unnamed elements: empty OCR or starts with underscore
+    unnamed = [
+        e for e in elements
+        if not e.get("ocr_text", "").strip()
+        or e.get("ocr_text", "").startswith("_")
+    ]
+    if not unnamed:
+        print("No unnamed elements found.")
+        return
+
+    print(f"Found {len(unnamed)} unnamed element(s).")
+    existing = {e.get("ocr_text", "") for e in elements
+                if e.get("ocr_text", "").strip() and not e.get("ocr_text", "").startswith("_")}
+    renamed = 0
+    batch = 8  # K3 handles multiple images per request
+
+    for n in range(0, len(unnamed), batch):
+        batch_items = unnamed[n:n + batch]
+        valid_items = [(i, el) for i, el in enumerate(batch_items)
+                       if el.get("image_path") and os.path.exists(el["image_path"])]
+        if not valid_items:
+            continue
+
+        indices = [i for i, _ in valid_items]
+        print(f"\nBatch {n // batch + 1}: naming {len(valid_items)} elements...")
+
+        # Build multi-image request
+        user_content = []
+        id_map = {}  # index -> element dict
+        for idx, (i, el) in enumerate(valid_items):
+            with open(el["image_path"], "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            ext = os.path.splitext(el["image_path"])[1][1:] or "png"
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/{ext};base64,{img_b64}"},
+            })
+            user_content.append({
+                "type": "text",
+                "text": f"[{idx}] current label: '{el.get('ocr_text','')[:30]}'",
+            })
+            id_map[idx] = el
+
+        user_content.append({
+            "type": "text",
+            "text": (
+                f"Name each of the {len(valid_items)} UI elements above. "
+                "Output JSON array: [\"name1\", \"name2\", ...]. "
+                "Each name should be appname-area-function format (e.g. '微信-顶栏-搜索'). "
+                "If you cannot identify an element, use 'unknown' for that slot."
+            ),
+        })
+
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": (
+                        "You name UI elements from screenshots. Output ONLY valid JSON array."
+                    )},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={"type": "json_object"},
+                reasoning_effort="low",
+                max_tokens=200,
+            )
+            names = json.loads(resp.choices[0].message.content or "{}")
+            # K3 may return {"names": [...]} or just [...]
+            if isinstance(names, dict):
+                names = names.get("names", names.get("results", []))
+            if not isinstance(names, list):
+                print(f"  Unexpected response format: {str(names)[:100]}")
+                continue
+        except Exception as e:
+            print(f"  Batch API error: {e}")
+            # Fall back to individual naming
+            for i in indices:
+                el = unnamed[i]
+                img_path = el.get("image_path", "")
+                try:
+                    with open(img_path, "rb") as f:
+                        img_b64 = base64.b64encode(f.read()).decode()
+                    ext = os.path.splitext(img_path)[1][1:] or "png"
+                    r = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": "Name this UI element. Output ONLY the name."},
+                            {"role": "user", "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:image/{ext};base64,{img_b64}"}},
+                                {"type": "text", "text": "What is this UI element?"},
+                            ]},
+                        ],
+                        reasoning_effort="low", max_tokens=20,
+                    )
+                    names.append((r.choices[0].message.content or "").strip())
+                except Exception:
+                    names.append("unknown")
+
+        # Apply names
+        for idx, name in enumerate(names):
+            if idx >= len(valid_items):
+                break
+            name = str(name).strip().strip('"').strip("'")
+            name = "".join(c for c in name if c not in '\\/:*?"<>|')[:60] or "unknown"
+            el = id_map[idx]
+
+            if name in existing:
+                dh = el.get("dhash", "0000")[:4]
+                name = f"{name}_{dh}"
+            existing.add(name)
+
+            meta_path = el.get("_file", "")
+            if meta_path and os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    data["ocr_text"] = name
+                    with open(meta_path, "w", encoding="utf-8") as fh:
+                        json.dump(data, fh, ensure_ascii=False, indent=2)
+                    old = el.get("ocr_text", "")[:30]
+                    print(f"  [{idx+1}] '{old}' → '{name}'")
+                    renamed += 1
+                except Exception:
+                    print(f"  [{idx+1}] write error")
+
+        time.sleep(0.5)
+
+    print(f"\nRepair complete. Renamed {renamed} element(s). Run 'list' to see updated names.")
 
 
 def cmd_refresh(name: str):
@@ -610,6 +796,7 @@ def main():
         "delete": lambda: cmd_delete(arg) if arg else print("Usage: ... delete <name>"),
         "rename": lambda: cmd_rename(arg) if arg else print("Usage: ... rename <name>"),
         "reimage": lambda: cmd_reimage(arg) if arg else print("Usage: ... reimage <name>"),
+        "repair": cmd_repair,
         "refresh": lambda: cmd_refresh(arg) if arg else print("Usage: ... refresh <name>"),
         "test": lambda: cmd_test(arg) if arg else print("Usage: ... test <name>"),
         "search": lambda: cmd_search(arg) if arg else print("Usage: ... search <text>"),
